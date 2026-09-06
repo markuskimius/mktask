@@ -87,7 +87,7 @@ class TestMain:
         monkeypatch.chdir(tmp_path)
         (a, kw) = self._run(monkeypatch)
         assert a == (str(PKG_TOML),)
-        assert kw == {"host": None, "port": None, "db_path": None}
+        assert kw == {"host": None, "port": None, "db_path": None, "user": None}
 
     def test_port_short_and_long(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -97,6 +97,11 @@ class TestMain:
     def test_host(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         assert self._run(monkeypatch, "--host", "0.0.0.0")[1]["host"] == "0.0.0.0"
+
+    def test_user_short_and_long(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert self._run(monkeypatch, "-u", "mark")[1]["user"] == "mark"
+        assert self._run(monkeypatch, "--user", "bob")[1]["user"] == "bob"
 
     @pytest.mark.parametrize("given, expected", [
         ("work", "work.db"),
@@ -166,14 +171,27 @@ class TestServe:
         cfg = captured["cfg"]
         assert (cfg["host"], cfg["port"], cfg["db_path"]) == ("127.0.0.1", 8080, "mktask.db")
 
+    def test_user_becomes_the_task_id_prefix(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+        cli.serve(PKG_TOML, user="mark")
+        assert captured["cfg"]["services"]["tasks"]["prefix"] == "MA"
+
+    def test_user_defaults_to_the_login_name(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+        monkeypatch.setattr(cli.getpass, "getuser", lambda: "zed")
+        cli.serve(PKG_TOML)
+        assert captured["cfg"]["services"]["tasks"]["prefix"] == "ZE"
+        assert "user" not in captured["cfg"], "the username is not an mkio config key"
+
     async def test_banner_printed_on_startup(self, monkeypatch, capsys):
         captured = self._capture(monkeypatch)
-        cli.serve(PKG_TOML, port=1234, db_path=":memory:")
+        cli.serve(PKG_TOML, port=1234, db_path=":memory:", user="mark")
         await captured["startup"]()
         out = capsys.readouterr().out
         assert f"mktask {__version__}" in out
         assert "http://127.0.0.1:1234/" in out
         assert "in-memory" in out
+        assert "Task IDs:  TKMAnnnnnnnn (user 'mark')" in out
 
     def test_package_level_serve_delegates(self, monkeypatch):
         captured = self._capture(monkeypatch)

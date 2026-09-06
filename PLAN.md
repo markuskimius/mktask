@@ -15,6 +15,10 @@ installed package rather than copied into the repo.
 and the repo is on GitHub; 75 tests pass and the UI was exercised end to end
 in a browser.
 
+**Status (2026-09-06):** Phase 6 (splitting, Task IDs, Complete) shipped as
+v0.2.0: 124 tests pass and the tree, Split dialog, cascades, and the red
+Delete button were exercised in a browser.
+
 ## Target layout
 
 ```
@@ -178,6 +182,54 @@ flash live; saved layouts round-trip after reload. Commit.
 2. Tag `v0.1.0`; `python -m build`; upload to TestPyPI first, install into a
    clean venv, run `mktask -d :memory:`; then `twine upload dist/*`.
 3. Create the GitHub repo `markuskimius/mktask`, push, add the PyPI link.
+
+## Phase 6 — splitting tasks, Task IDs, "Complete" (2026-09-06)
+
+Vocabulary: a task is *split* into *child* tasks, to any depth; a task is
+*open* or *complete*; its identifier is its *Task ID*. No "subtask", "done",
+or bare "ID" anywhere.
+
+- **Schema.** `tasks.task_id TEXT PRIMARY KEY`, `parent_task_id` (`''` =
+  top level), `completed_at` replaces `done_at`, status `complete` replaces
+  `done`. New `counters` table (`name`, `last`) holds the Task ID sequence.
+  No migration from 0.1.0: before 1.0 a schema change means deleting the
+  database.
+- **Task IDs.** `TK` + two letters from the username (`--user`, default the
+  OS login; alphanumerics, uppercased, `X`-padded) + a global sequence
+  padded to at least 8 digits that never repeats and never wraps. Assigned
+  by `mktask/services.py` (`TaskTransactions`, a mkio `TransactionService`
+  subclass named by dotted path in the TOML), which upserts `counters` and
+  inserts the task in one transaction and rejects a client-supplied id. The
+  counter seeds from `counters` at start, else from the largest existing id.
+- **Cascades.** In the same class: `complete` completes the subtree,
+  `reopen` reopens the task and its ancestors, `delete` removes the subtree —
+  each as one `writer.submit` over the rows a recursive CTE finds, so every
+  row is announced live.
+- **UI.** mkui ≥ 0.2.12 tree rows on the `tasks` pane (`child =
+  parent_task_id`, `parent = task_id`, caret on `task_id`, `expand = "all"`,
+  `filterScope = "all"` so "Show Open Only" tests every row but keeps the way
+  to a match). Split button and dialog (hidden `parent_task_id`, levels
+  prefilled from the parent), Complete/Reopen buttons, Expand All / Collapse
+  All menu items (`table.expand`), "Split from Task ID …" line in the detail
+  pane, `Task ID` column label.
+- **Tests.** `test_services.py` (prefix, formatting, pattern),
+  `test_server.py` (sequence rejection / no reuse / restart / rollover past
+  8 digits / lost counter, split links, cascades, `--user` prefixes),
+  `test_ui_config.py` (tree links real columns, no dialog sends `task_id` or
+  `last`, the word "done" is gone).
+
+### Deferred from phase 6
+
+- **Move** a task under another parent: a `parent_task_id` update plus a
+  cycle check (refuse a target inside the node's own subtree); the client
+  re-indexes on the update.
+- **Auto-complete a split parent** when its last open child completes
+  (server-side, in `TaskTransactions`); today a parent stays open.
+- A **children count** or `depth` in style scopes to dim a split parent's
+  score — needs mkui to expose them.
+- A **Subtasks pane** following the selection (`parent_task_id` is already
+  server-filterable).
+- Persisting tree **expansion state** in saved layouts (mkui).
 
 ## Deferred (not in the skeleton)
 

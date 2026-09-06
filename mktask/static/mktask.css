@@ -2,6 +2,7 @@
 
 /* Detail pane: text widgets render as inline spans; stack them. */
 .task-detail-title,
+.task-detail-parent,
 .task-detail-notes {
   display: block;
   padding: 0.5em 0.75em 0;
@@ -10,4 +11,9 @@
 
 .task-detail-title {
   font-weight: bold;
+}
+
+.task-detail-parent {
+  color: var(--mkui-fg-mute, #858585);
+  font-size: 0.9em;
 }

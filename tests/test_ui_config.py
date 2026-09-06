@@ -57,7 +57,7 @@ def test_menu_actions_reference_known_panes(app_config):
     for item in _walk(app_config["menubar"]):
         if item.get("action") == "pane.show":
             assert item["args"] in panes, f"menu item {item['label']} shows unknown pane"
-        if item.get("action") in ("table.filter", "table.sort", "table.columns"):
+        if item.get("action") in ("table.filter", "table.sort", "table.columns", "table.expand"):
             assert item["args"]["pane"] in panes, f"menu item {item['label']} targets unknown pane"
 
 
@@ -177,6 +177,14 @@ def test_selection_state_declared(app_config, tasks_pane):
     assert path.split(".")[0] in app_config["state"]
 
 
+def test_detail_pane_reads_real_columns(app_config, task_columns):
+    """`state.selected_task.<col>` mirrors a row, so <col> must be a real column."""
+    text = json.dumps(app_config["panes"]["task-detail"])
+    cols = set(re.findall(r"state\.selected_task\.([a-z_]+)", text))
+    assert cols, "the detail pane reads the selected task"
+    assert cols <= task_columns, f"detail pane reads unknown {cols - task_columns}"
+
+
 def test_text_widgets_read_declared_state(app_config):
     roots = set(app_config["state"])
     for pane_id, pane in app_config["panes"].items():
@@ -212,23 +220,57 @@ def test_level_selects_offer_one_to_five(app_config):
                 assert [o["value"] for o in field["options"]] == [1, 2, 3, 4, 5]
                 value = field["value"]
                 assert value.startswith("${row.") if isinstance(value, str) else 1 <= value <= 5
-    assert seen == 4, "Add and Edit each carry importance and urgency"
+    assert seen == 6, "Add, Split, and Edit each carry importance and urgency"
 
 
 def test_dialogs_have_required_title(app_config):
     for dialog in _dialogs(app_config):
         assert dialog.get("title")
         assert dialog.get("submit", {}).get("label")
-        if dialog["submit"]["op"] in ("add", "edit"):
+        if dialog["submit"]["op"] in ("add", "split", "edit"):
             title = next(f for f in _walk(dialog["fields"]) if f.get("name") == "title")
             assert title.get("required") is True
 
 
-def test_edit_and_delete_carry_hidden_id(app_config):
+def _hidden(dialog, name):
+    fields = [f for f in _walk(dialog["fields"]) if f.get("name") == name]
+    assert fields, f"{dialog['title']} has no {name} field"
+    assert fields[0]["type"] == "hidden"
+    return fields[0]["value"]
+
+
+def test_edit_and_delete_carry_hidden_task_id(app_config):
     for dialog in _dialogs(app_config):
         if dialog["submit"]["op"] in ("edit", "delete"):
-            ids = [f for f in _walk(dialog["fields"]) if f.get("name") == "id"]
-            assert ids and ids[0]["type"] == "hidden" and ids[0]["value"] == "${row.id}"
+            assert _hidden(dialog, "task_id") == "${row.task_id}"
+
+
+def test_split_links_child_to_selected_row(app_config):
+    """Split carries the parent's Task ID hidden and never picks the child's."""
+    split = next(d for d in _dialogs(app_config) if d["submit"]["op"] == "split")
+    assert _hidden(split, "parent_task_id") == "${row.task_id}"
+
+
+def test_no_client_sends_server_filled_fields(app_config):
+    """Task IDs and the sequence number come from TaskTransactions, never a client."""
+    for node in _walk(app_config["panes"]):
+        if "service" in node and "op" in node and node["op"] in ("add", "split"):
+            assert not ({"task_id", "last"} & set(node.get("data", {})))
+    for dialog in _dialogs(app_config):
+        if dialog["submit"]["op"] in ("add", "split"):
+            names = {f["name"] for f in _walk(dialog["fields"]) if "name" in f}
+            assert not ({"task_id", "last"} & names), dialog["title"]
+
+
+def test_delete_button_is_red_only_when_armed(tasks_pane):
+    """A styled button must not change width between states: colors only."""
+    delete = next(b for b in tasks_pane["buttons"] if b["label"] == "Delete")
+    rules = delete["style"]
+    armed = next(r for r in rules if r.get("when") == "enabled")
+    assert armed["background"].lower() in ("#c62828", "red")
+    for rule in rules:
+        assert not ({"bold", "caps"} & set(rule)), "size-changing keys shift the toolbar"
+    assert all(set(r) - {"when"} <= {"color", "background"} for r in rules)
 
 
 def test_row_buttons_declare_row_unit(tasks_pane):
@@ -241,16 +283,46 @@ def test_row_buttons_declare_row_unit(tasks_pane):
             assert button["enable"].get("minSelected", 0) >= 1, button["label"]
 
 
-def test_status_gates_on_done_and_reopen(tasks_pane):
+def test_status_gates_on_complete_and_reopen(tasks_pane):
     by_label = {b["label"]: b for b in tasks_pane["buttons"]}
-    assert "r.status == 'open'" in by_label["Done"]["enable"]["when"]
-    assert "r.status == 'done'" in by_label["Reopen"]["enable"]["when"]
+    assert "r.status == 'open'" in by_label["Complete"]["enable"]["when"]
+    assert "r.status == 'complete'" in by_label["Reopen"]["enable"]["when"]
+
+
+def test_the_word_done_is_gone(app_config, server_config):
+    """A task is open or complete; "done" is not a status, a label, or an op."""
+    text = json.dumps(app_config) + (PKG / "mktask.toml").read_text()
+    assert not re.search(r"\bdone\b", text, re.IGNORECASE)
 
 
 def test_timestamps_are_stamped_client_side(app_config):
     text = json.dumps(app_config["panes"])
     stamp = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
-    assert text.count(json.dumps(stamp)[1:-1]) >= 4, "done, reopen, and edit stamp timestamps"
+    assert text.count(json.dumps(stamp)[1:-1]) >= 4, "complete, reopen, and edit stamp timestamps"
+
+
+# ─── Tree rows ─────────────────────────────────────────────────────
+
+def test_tree_links_real_columns(tasks_pane, task_columns):
+    tree = tasks_pane["tree"]
+    assert tree["child"] == "parent_task_id" and tree["parent"] == "task_id"
+    assert {tree["child"], tree["parent"]} <= task_columns
+    assert tree["column"] in tasks_pane["columns"]
+    assert tree["expand"] == "all" or isinstance(tree["expand"], int)
+    assert tree["filterScope"] in ("roots", "children", "all")
+
+
+def test_open_only_filter_tests_every_row(tasks_pane):
+    """With Branch scope a complete child under an open parent is hidden and an
+    open child keeps its complete parent visible as the way to it."""
+    assert tasks_pane["tree"]["filterScope"] == "all"
+    assert tasks_pane["filters"]["status"] == ["open"]
+
+
+def test_expand_menu_targets_the_tasks_pane(app_config):
+    items = {i["label"]: i for i in _walk(app_config["menubar"]) if i.get("action") == "table.expand"}
+    assert items["Expand All"]["args"] == {"pane": "tasks", "depth": "all"}
+    assert items["Collapse All"]["args"] == {"pane": "tasks"}
 
 
 # ─── Wiring ────────────────────────────────────────────────────────
@@ -308,6 +380,6 @@ def test_every_transaction_field_has_default_or_is_sent(app_config, server_confi
         if dialog is not None:
             sent |= {f["name"] for f in _walk(dialog["fields"]) if "name" in f}
         for op in ops:
-            required = set(op.get("fields", [])) - set(op.get("defaults", {}))
-            required |= set(op.get("key", []))
+            required = set(op.get("fields", [])) | set(op.get("key", []))
+            required -= set(op.get("defaults", {}))
             assert required <= sent, f"{node['service']}.{node['op']} misses {required - sent}"

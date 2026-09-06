@@ -14,6 +14,17 @@ you can sort, filter, and arrange however you like. Each task carries an
 importance and an urgency (1–5); the blotter derives a score from them so the
 most pressing work floats to the top.
 
+A task can be **split** into child tasks, and a child can be split again, to
+any depth. The blotter nests children under their parent, each level sorted
+by score, with carets to fold a subtree away. Completing a task completes
+everything split from it; reopening a child reopens its ancestors; deleting a
+task deletes its whole subtree.
+
+Every task gets a **Task ID** like `TKMA00000042`: `TK`, two letters from
+the username the server runs as (`--user`), and a sequence number that
+starts at `00000001`, never repeats, and grows past eight digits rather than
+wrapping (`TKMA100000000` follows `TKMA99999999`).
+
 ## Quick start
 
 ```bash
@@ -26,7 +37,7 @@ Everything installs via `pip`; nothing is fetched at runtime.
 ## CLI
 
 ```
-mktask [config] [-p PORT] [--host HOST] [-d PATH] [--version]
+mktask [config] [-p PORT] [--host HOST] [-d PATH] [-u USER] [--version]
 ```
 
 - `config` — path to a `mktask.toml`. Defaults to `./mktask.toml` if
@@ -35,6 +46,9 @@ mktask [config] [-p PORT] [--host HOST] [-d PATH] [--version]
 - `--host` — override the listening host (default `127.0.0.1`).
 - `-d, --db` — database file; `.db` is appended when there is no
   extension. `:memory:` runs without persistence.
+- `-u, --user` — the username whose first two alphanumeric characters,
+  uppercased, prefix new Task IDs (`mark` → `TKMA…`; a one-character name is
+  padded with `X`). Defaults to the OS login name.
 
 The server prints the URL to open once it is listening. If the port is
 already taken it exits immediately with an error instead of starting.
@@ -50,7 +64,15 @@ python -c "import mktask, pathlib; print(pathlib.Path(mktask.__file__).parent / 
 `mktask.toml` declares the SQLite tables, the mkio services, and the static
 routes; `static/app.json` next to it declares the UI (menus, panes, frames,
 dialogs). Both are plain config — see the mkio and mkui READMEs for the
-formats.
+formats. The one piece of code is `mktask/services.py`, which the `tasks`
+service points at: it assigns Task IDs and runs the complete, reopen, and
+delete cascades.
+
+## Upgrading
+
+Until 1.0, a release may change the database schema without migrating an
+older database. 0.2.0 does (Task IDs, splitting, and `complete` replacing
+`done`): delete your `mktask.db` before starting the new version.
 
 ## Development
 
@@ -60,9 +82,11 @@ mktask -d :memory:
 python -m pytest
 ```
 
-The tests cover the CLI and config loading, a real server over HTTP and
-WebSocket (every task op, the query filter, saved layouts, the port and
-host flags), and the static integrity of `app.json` against `mktask.toml`.
+The tests cover the CLI and config loading, Task ID formatting, a real
+server over HTTP and WebSocket (every task op, splitting and the cascades,
+the Task ID sequence across restarts and past eight digits, the query
+filter, saved layouts, the port, host, and user flags), and the static
+integrity of `app.json` against `mktask.toml`.
 
 ## License
 

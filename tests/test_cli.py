@@ -19,6 +19,7 @@ def test_help():
     assert "task prioritizer" in result.stdout
     assert "--port" in result.stdout
     assert "--db" in result.stdout
+    assert "--user" in result.stdout and "Task IDs" in result.stdout
 
 
 def test_version():

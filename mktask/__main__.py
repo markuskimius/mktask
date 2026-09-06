@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import socket
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ from mkio import create_app
 from mkio.config import load_config
 
 from mktask import __version__
+from mktask.services import user_prefix
 
 
 def serve(
@@ -19,8 +21,13 @@ def serve(
     host: str | None = None,
     port: int | None = None,
     db_path: str | None = None,
+    user: str | None = None,
 ) -> None:
-    """Start the mktask server. Blocks until shutdown."""
+    """Start the mktask server. Blocks until shutdown.
+
+    `user` (default: the OS login name) supplies the two prefix letters of
+    every Task ID this server assigns.
+    """
     cfg = _load_config(config)
     if host is not None:
         cfg["host"] = host
@@ -28,6 +35,10 @@ def serve(
         cfg["port"] = port
     if db_path is not None:
         cfg["db_path"] = db_path
+    if user is None:
+        user = getpass.getuser()
+    if "tasks" in cfg.get("services", {}):
+        cfg["services"]["tasks"]["prefix"] = user_prefix(user)
 
     # Probe the port before anything else starts: a bind failure inside
     # app.start() happens after the startup hooks have opened the database,
@@ -37,7 +48,7 @@ def serve(
     app = create_app(cfg)
 
     async def announce() -> None:
-        print(_banner(cfg, config), flush=True)
+        print(_banner(cfg, config, user), flush=True)
 
     app.on_startup(announce)
     app.run()
@@ -55,7 +66,7 @@ def _check_port(host: str, port: int) -> None:
         raise SystemExit(1) from None
 
 
-def _banner(cfg: dict[str, Any], config: str | Path | dict[str, Any]) -> str:
+def _banner(cfg: dict[str, Any], config: str | Path | dict[str, Any], user: str | None = None) -> str:
     """Startup summary: where the UI is and what it is running on."""
     host = cfg.get("host", "127.0.0.1")
     port = cfg.get("port", 8080)
@@ -70,14 +81,17 @@ def _banner(cfg: dict[str, Any], config: str | Path | dict[str, Any]) -> str:
     database = "in-memory (nothing persists)" if db_path == ":memory:" else str(Path(db_path).resolve())
     config_desc = "<dict>" if isinstance(config, dict) else str(Path(config).resolve())
 
-    return "\n".join([
+    lines = [
         f"mktask {__version__}",
         f"  Web UI:    http://{url_host}:{port}/",
         f"  Listening: {listen}",
         f"  Config:    {config_desc}",
         f"  Database:  {database}",
-        "  Press Ctrl+C to stop.",
-    ])
+    ]
+    if user is not None:
+        lines.append(f"  Task IDs:  TK{user_prefix(user)}nnnnnnnn (user {user!r})")
+    lines.append("  Press Ctrl+C to stop.")
+    return "\n".join(lines)
 
 
 def _load_config(config: str | Path | dict[str, Any]) -> dict[str, Any]:
@@ -134,6 +148,10 @@ def main() -> None:
         help="database filename (.db added if no extension; use ':memory:' for in-memory)",
     )
     parser.add_argument(
+        "-u", "--user", default=None,
+        help="username whose first two letters prefix new Task IDs (default: the OS login name)",
+    )
+    parser.add_argument(
         "--version", action="version", version=f"mktask {__version__}",
     )
     args = parser.parse_args()
@@ -146,7 +164,7 @@ def main() -> None:
     if not Path(config_path).is_file():
         print(f"Error: config file not found: {config_path}", file=sys.stderr)
         sys.exit(1)
-    serve(config_path, host=args.host, port=args.port, db_path=db_path)
+    serve(config_path, host=args.host, port=args.port, db_path=db_path, user=args.user)
 
 
 if __name__ == "__main__":

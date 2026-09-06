@@ -66,6 +66,24 @@
             },
             "merge": true
           }
+        },
+        {
+          "sep": true
+        },
+        {
+          "label": "Expand All",
+          "action": "table.expand",
+          "args": {
+            "pane": "tasks",
+            "depth": "all"
+          }
+        },
+        {
+          "label": "Collapse All",
+          "action": "table.expand",
+          "args": {
+            "pane": "tasks"
+          }
         }
       ]
     },
@@ -152,7 +170,7 @@
       "service": "all_tasks",
       "protocol": "query",
       "columns": [
-        "id",
+        "task_id",
         "title",
         "score",
         "importance",
@@ -162,7 +180,7 @@
         "created_at"
       ],
       "labels": {
-        "id": "ID",
+        "task_id": "Task ID",
         "title": "Title",
         "score": "Score",
         "importance": "Imp",
@@ -181,7 +199,17 @@
           "parse": "%Y-%m-%d %H:%M:%S"
         }
       },
-      "sort": "-score",
+      "tree": {
+        "child": "parent_task_id",
+        "parent": "task_id",
+        "column": "task_id",
+        "expand": "all",
+        "filterScope": "all"
+      },
+      "sort": [
+        "-score",
+        "created_at"
+      ],
       "filters": {
         "status": [
           "open"
@@ -204,14 +232,14 @@
         ],
         "status": [
           {
-            "when": "value == 'done'",
+            "when": "value == 'complete'",
             "color": "#4ec9b0"
           }
         ]
       },
       "rowStyle": [
         {
-          "when": "status == 'done'",
+          "when": "status == 'complete'",
           "color": "#858585",
           "strike": true
         }
@@ -221,14 +249,14 @@
       },
       "buttons": [
         {
-          "label": "+ Add",
+          "label": "New",
           "enable": {
             "connected": true
           },
           "action": {
             "type": "dialog",
             "dialog": {
-              "title": "Add Task",
+              "title": "New Task",
               "modal": true,
               "width": 440,
               "fields": [
@@ -316,9 +344,123 @@
                 }
               ],
               "submit": {
-                "label": "Add",
+                "label": "Create",
                 "service": "tasks",
                 "op": "add"
+              }
+            }
+          }
+        },
+        {
+          "label": "Split",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Split Task ID ${row.task_id}",
+              "modal": true,
+              "width": 440,
+              "fields": [
+                {
+                  "name": "parent_task_id",
+                  "type": "hidden",
+                  "value": "${row.task_id}"
+                },
+                {
+                  "label": "Parent",
+                  "type": "readonly",
+                  "value": "${row.title}"
+                },
+                {
+                  "name": "title",
+                  "label": "Child task title",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "What part of it needs doing?"
+                },
+                {
+                  "row": [
+                    {
+                      "name": "importance",
+                      "label": "Importance",
+                      "type": "select",
+                      "width": 0.5,
+                      "value": "${row.importance}",
+                      "options": [
+                        {
+                          "value": 1,
+                          "label": "1 - Lowest"
+                        },
+                        {
+                          "value": 2,
+                          "label": "2 - Low"
+                        },
+                        {
+                          "value": 3,
+                          "label": "3 - Medium"
+                        },
+                        {
+                          "value": 4,
+                          "label": "4 - High"
+                        },
+                        {
+                          "value": 5,
+                          "label": "5 - Highest"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "urgency",
+                      "label": "Urgency",
+                      "type": "select",
+                      "width": 0.5,
+                      "value": "${row.urgency}",
+                      "options": [
+                        {
+                          "value": 1,
+                          "label": "1 - Lowest"
+                        },
+                        {
+                          "value": 2,
+                          "label": "2 - Low"
+                        },
+                        {
+                          "value": 3,
+                          "label": "3 - Medium"
+                        },
+                        {
+                          "value": 4,
+                          "label": "4 - High"
+                        },
+                        {
+                          "value": 5,
+                          "label": "5 - Highest"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "due",
+                  "label": "Due (YYYY-MM-DD, optional)",
+                  "type": "text",
+                  "placeholder": "2026-12-31",
+                  "value": "${row.due}"
+                },
+                {
+                  "name": "notes",
+                  "label": "Notes",
+                  "type": "textarea",
+                  "value": ""
+                }
+              ],
+              "submit": {
+                "label": "Split",
+                "service": "tasks",
+                "op": "split"
               }
             }
           }
@@ -332,14 +474,14 @@
           "action": {
             "type": "dialog",
             "dialog": {
-              "title": "Edit Task #${row.id}",
+              "title": "Edit Task ID ${row.task_id}",
               "modal": true,
               "width": 440,
               "fields": [
                 {
-                  "name": "id",
+                  "name": "task_id",
                   "type": "hidden",
-                  "value": "${row.id}"
+                  "value": "${row.task_id}"
                 },
                 {
                   "name": "updated_at",
@@ -439,7 +581,7 @@
           }
         },
         {
-          "label": "Done",
+          "label": "Complete",
           "enable": {
             "connected": true,
             "minSelected": 1,
@@ -448,10 +590,10 @@
           "action": {
             "type": "transaction",
             "service": "tasks",
-            "op": "done",
+            "op": "complete",
             "data": {
-              "id": "${row.id}",
-              "done_at": "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}",
+              "task_id": "${row.task_id}",
+              "completed_at": "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}",
               "updated_at": "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
             }
           }
@@ -461,14 +603,14 @@
           "enable": {
             "connected": true,
             "minSelected": 1,
-            "when": "ALL(rows, r -> r.status == 'done')"
+            "when": "ALL(rows, r -> r.status == 'complete')"
           },
           "action": {
             "type": "transaction",
             "service": "tasks",
             "op": "reopen",
             "data": {
-              "id": "${row.id}",
+              "task_id": "${row.task_id}",
               "updated_at": "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
             }
           }
@@ -479,20 +621,27 @@
           "enable": {
             "connected": true
           },
+          "style": [
+            {
+              "when": "enabled",
+              "background": "#c62828",
+              "color": "#fff"
+            }
+          ],
           "action": {
             "type": "dialog",
             "dialog": {
-              "title": "Delete Task #${row.id}",
+              "title": "Delete Task ID ${row.task_id}",
               "modal": true,
               "width": 380,
               "fields": [
                 {
-                  "name": "id",
+                  "name": "task_id",
                   "type": "hidden",
-                  "value": "${row.id}"
+                  "value": "${row.task_id}"
                 },
                 {
-                  "label": "Delete this task?",
+                  "label": "Delete this task and every task split from it?",
                   "type": "readonly",
                   "value": "${row.title}"
                 }
@@ -512,8 +661,13 @@
       "widgets": [
         {
           "type": "text",
-          "text": "${IF(state.selected_task == NULL, 'Select a task to see its notes.', FORMAT('#{}  {}', state.selected_task.id, state.selected_task.title))}",
+          "text": "${IF(state.selected_task == NULL, 'Select a task to see its notes.', FORMAT('{}  {}', state.selected_task.task_id, state.selected_task.title))}",
           "class": "task-detail-title"
+        },
+        {
+          "type": "text",
+          "text": "${IF(state.selected_task == NULL || state.selected_task.parent_task_id == '', '', CONCAT('Split from Task ID ', state.selected_task.parent_task_id))}",
+          "class": "task-detail-parent"
         },
         {
           "type": "text",
