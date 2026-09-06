@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import socket
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,11 @@ def serve(
     if db_path is not None:
         cfg["db_path"] = db_path
 
+    # Probe the port before anything else starts: a bind failure inside
+    # app.start() happens after the startup hooks have opened the database,
+    # whose aiosqlite threads then keep the process alive after the traceback.
+    _check_port(cfg["host"], cfg["port"])
+
     app = create_app(cfg)
 
     async def announce() -> None:
@@ -35,6 +41,18 @@ def serve(
 
     app.on_startup(announce)
     app.run()
+
+
+def _check_port(host: str, port: int) -> None:
+    """Fail fast, before anything else starts, if the web port can't be bound."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, port))
+    except OSError as exc:
+        print(f"Error: cannot listen on {host}:{port}: {exc.strerror or exc}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 def _banner(cfg: dict[str, Any], config: str | Path | dict[str, Any]) -> str:

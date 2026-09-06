@@ -11,8 +11,9 @@ one Python package that bundles its server TOML and static UI, a `mktask`
 console script that runs the server, and mkui's assets served from the
 installed package rather than copied into the repo.
 
-**Status (2026-09-05):** Phases 1–4 are built and verified (15 tests pass; the
-UI was exercised end to end in a browser). Phase 5, publishing, is not done.
+**Status (2026-09-05):** All five phases are done. v0.1.0 is published to PyPI
+and the repo is on GitHub; 75 tests pass and the UI was exercised end to end
+in a browser.
 
 ## Target layout
 

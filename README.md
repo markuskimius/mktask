@@ -36,6 +36,9 @@ mktask [config] [-p PORT] [--host HOST] [-d PATH] [--version]
 - `-d, --db` — database file; `.db` is appended when there is no
   extension. `:memory:` runs without persistence.
 
+The server prints the URL to open once it is listening. If the port is
+already taken it exits immediately with an error instead of starting.
+
 ## Customizing
 
 Copy the bundled config out and edit it:
@@ -56,6 +59,10 @@ pip install -e '.[test]'
 mktask -d :memory:
 python -m pytest
 ```
+
+The tests cover the CLI and config loading, a real server over HTTP and
+WebSocket (every task op, the query filter, saved layouts, the port and
+host flags), and the static integrity of `app.json` against `mktask.toml`.
 
 ## License
 
