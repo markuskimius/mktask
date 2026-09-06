@@ -1,0 +1,13 @@
+/* mktask — app-specific overrides on top of mkui's theme. */
+
+/* Detail pane: text widgets render as inline spans; stack them. */
+.task-detail-title,
+.task-detail-notes {
+  display: block;
+  padding: 0.5em 0.75em 0;
+  white-space: pre-wrap;
+}
+
+.task-detail-title {
+  font-weight: bold;
+}

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>mktask</title>
+  <link rel="stylesheet" href="/mkui/styles/mkui.css">
+  <link rel="stylesheet" href="/static/mktask.css">
+  <script type="module">
+    import "/mkui/src/index.js";
+
+    // Revalidate rather than trust heuristic freshness: mkio serves static
+    // files without Cache-Control, so a stale app.json silently pins the UI
+    // to an old layout.
+    const res = await fetch("/static/app.json", { cache: "no-cache" });
+    const config = await res.json();
+    const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+    config.mkio.url = `${wsProto}//${location.host}/ws`;
+    document.querySelector("mkui-app").setConfig(config);
+  </script>
+</head>
+<body>
+  <mkui-app></mkui-app>
+</body>
+</html>

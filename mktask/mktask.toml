@@ -1,0 +1,75 @@
+name = "mktask"
+# version is injected from mktask.__version__ at load time; do not add one here
+port = 8080
+host = "127.0.0.1"
+db_path = "mktask.db"
+auto_migrate = true
+
+# ─── Tables ─────────────────────────────────────────────────────────
+
+# One row per task. importance/urgency are 1..5; the UI derives a score
+# from them (placeholder for the real prioritization model). Timestamps are
+# UTC "YYYY-MM-DD HH:MM:SS" to match SQLite's CURRENT_TIMESTAMP.
+[tables.tasks]
+columns = { id = "INTEGER PRIMARY KEY AUTOINCREMENT", title = "TEXT NOT NULL", notes = "TEXT NOT NULL DEFAULT ''", status = "TEXT NOT NULL DEFAULT 'open'", importance = "INTEGER NOT NULL DEFAULT 3", urgency = "INTEGER NOT NULL DEFAULT 3", due = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", done_at = "TEXT NOT NULL DEFAULT ''" }
+
+# Saved window layouts for mkui's Layout menu: one row per save, the newest
+# being the user's current layout and the older ones its restorable history
+# (the client prunes through `delete`). mktask has no login, so every save
+# lands under owner '' — the default history shared by everyone on this server.
+[tables.mkui_layouts]
+columns = { id = "INTEGER PRIMARY KEY AUTOINCREMENT", app = "TEXT NOT NULL DEFAULT ''", owner = "TEXT NOT NULL DEFAULT ''", saved = "TEXT DEFAULT CURRENT_TIMESTAMP", layout = "TEXT NOT NULL" }
+
+# ─── Services ───────────────────────────────────────────────────────
+
+[services.tasks]
+protocol = "transaction"
+description = "Add, edit, complete, reopen, and delete tasks"
+
+[services.tasks.ops]
+add = [
+    { table = "tasks", op_type = "insert", fields = ["title", "notes", "importance", "urgency", "due"], defaults = { notes = "", importance = 3, urgency = 3, due = "" } },
+]
+edit = [
+    { table = "tasks", op_type = "update", key = ["id"], fields = ["title", "notes", "importance", "urgency", "due", "updated_at"] },
+]
+done = [
+    { table = "tasks", op_type = "update", key = ["id"], fields = ["done_at", "updated_at"], defaults = { status = "done" } },
+]
+reopen = [
+    { table = "tasks", op_type = "update", key = ["id"], fields = ["updated_at"], defaults = { status = "open", done_at = "" } },
+]
+delete = [
+    { table = "tasks", op_type = "delete", key = ["id"] },
+]
+
+[services.all_tasks]
+protocol = "query"
+description = "Every task, live"
+primary_table = "tasks"
+filterable = ["status"]
+
+[services.mkui_layouts]
+protocol = "transaction"
+description = "Save and delete window layouts"
+
+[services.mkui_layouts.ops]
+save = { table = "mkui_layouts", op_type = "insert", fields = ["app", "owner", "layout"] }
+delete = { table = "mkui_layouts", op_type = "delete", key = ["id"] }
+
+[services.mkui_layouts_list]
+protocol = "reqrep"
+description = "Saved layouts of one app and owner, newest first"
+sql = "SELECT id, saved FROM mkui_layouts WHERE app = :app AND owner = :owner ORDER BY id DESC"
+
+[services.mkui_layouts_get]
+protocol = "reqrep"
+description = "One saved layout"
+sql = "SELECT id, saved, layout FROM mkui_layouts WHERE id = :id"
+
+# ─── Static files ───────────────────────────────────────────────────
+# "__mkui__" resolves to the installed mkui package's static directory.
+
+[static]
+"/" = "./static"
+"/mkui" = "__mkui__"
