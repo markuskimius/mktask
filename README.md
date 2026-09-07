@@ -20,6 +20,12 @@ by score, with carets to fold a subtree away. Completing a task completes
 everything split from it; reopening a child reopens its ancestors; deleting a
 task deletes its whole subtree.
 
+**Move** re-files a task: pick a new parent, or *— Top level —* to make it a
+top-level task again. Everything split from it comes along. The picker offers
+every open task except the ones under the task being moved, and a move that
+would land a linked task in its own tree is refused, naming the links to
+remove first.
+
 Every task gets a **Task ID** like `TKMA00000042`: `TK`, two letters from
 the username the server runs as (`--user`), and a sequence number that
 starts at `00000001`, never repeats, and grows past eight digits rather than
@@ -104,7 +110,8 @@ copied config); `static/app.json` next to it declares the UI (menus, panes,
 frames, dialogs). Both are plain config — see the mkio and mkui READMEs for the
 formats. The one piece of code is `mktask/services.py`, which the `tasks`
 service points at: it assigns Task IDs, runs the complete, reopen, and
-delete cascades, and manages references and relations (task links are
+delete cascades, re-parents a task on a move (refusing a cycle or a move
+that would swallow a task link), and manages references and relations (task links are
 written as a mirrored pair, labels follow the linked task's title, a
 renamed relation rewrites its links, orphaned files are removed).
 `static/refs.js` is the one custom widget: the drop box, the reference list of
@@ -121,7 +128,8 @@ database, so a 0.2.0 database carries over as is. 0.3.1 changes no schema.
 stores a link's relation as its wording ("blocked by") rather than a key
 (`blocked_by`): links made before 0.4.0 must be removed and re-added. 0.5.0
 changes no schema — the Detail pane's new reference list reads the tables
-0.4.0 already had.
+0.4.0 already had, and neither does 0.6.0: moving a task rewrites one
+existing column.
 
 ## Development
 
@@ -133,8 +141,9 @@ python -m pytest
 
 The tests cover the CLI and config loading, Task ID formatting, a real
 server over HTTP and WebSocket (every task op, splitting and the cascades,
-the Task ID sequence across restarts and past eight digits, references and
-task links with their validation, the same-tree rule, and cascades,
+moving a task to another parent or the top level, the Task ID sequence
+across restarts and past eight digits, references and task links with their
+validation, the same-tree rule, and cascades,
 user-defined relations (seeding, uniqueness, rename rewriting links in both
 directions, a swap flipping them, delete refused in use), file upload,
 dedupe, and cleanup, live delete announcements, the query filter, saved

@@ -379,6 +379,31 @@ def test_edit_and_delete_carry_hidden_task_id(app_config):
             assert _hidden(dialog, "task_id") == "${row.task_id}"
 
 
+def test_move_picks_its_parent_from_move_options(app_config, server_config):
+    """The picker's "top level" is a sentinel, never '': mkui's optionsFrom
+    select prepends its own empty option and cannot be preselected, so an
+    empty value would be the same entry and an untouched dialog would
+    promote the task. `required` is what refuses the empty option."""
+    from mktask.services import TOP_LEVEL
+
+    move = next(d for d in _dialogs(app_config) if d["submit"]["op"] == "move")
+    assert _hidden(move, "task_id") == "${row.task_id}"
+    field = next(f for f in _walk(move["fields"]) if f.get("name") == "parent_task_id")
+    assert field["type"] == "select"
+    assert field["required"] is True
+    assert "value" not in field, "mkui cannot preselect an optionsFrom select"
+    assert field["optionsFrom"]["service"] == "move_options"
+    assert field["optionsFrom"]["params"] == {"task_id": "${row.task_id}"}
+    assert TOP_LEVEL in server_config["services"]["move_options"]["sql"]
+
+
+def test_move_says_where_the_task_sits_now(app_config):
+    """The select cannot show the current parent, so a readonly line must."""
+    move = next(d for d in _dialogs(app_config) if d["submit"]["op"] == "move")
+    lines = [f for f in _walk(move["fields"]) if f.get("type") == "readonly"]
+    assert any("parent_task_id" in f["value"] for f in lines), "no 'where it sits now' line"
+
+
 def test_split_links_child_to_selected_row(app_config):
     """Split carries the parent's Task ID hidden and never picks the child's."""
     split = next(d for d in _dialogs(app_config) if d["submit"]["op"] == "split")

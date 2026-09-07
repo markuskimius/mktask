@@ -9,6 +9,9 @@ writes and adds what a config cannot express:
   (TKMA00000001). The number comes from an in-memory counter seeded from the
   `counters` table at startup and written back in the same transaction as
   the insert, so a crash can neither reuse nor skip a number.
+- `move` re-parents one task, its subtree coming along: it refuses a cycle
+  and a move that would leave a task link inside one tree, and reopens the
+  new ancestors when open work lands under a complete parent.
 - `complete` and `delete` apply to the whole subtree under the given task,
   and `reopen` to the task and every ancestor, so the open-only view never
   shows a child without its parent. A delete also removes every reference
@@ -44,6 +47,7 @@ COUNTER_NAME = "task"
 _MIN_DIGITS = 8
 
 REF_KINDS = ("url", "text", "file", "task")
+TOP_LEVEL = "__top__"  # the Move picker's "top level"; see move_options in mktask.toml
 SEED_RELATIONS = Path(__file__).with_name("relations.json")  # what a new database starts with
 FILES_ROUTE = "/files/"
 _LABEL_MAX = 80
@@ -79,6 +83,7 @@ class TaskTransactions(TransactionService):
     """mkio transaction service for `tasks` with Task IDs, cascades, and references."""
 
     CASCADE_OPS = ("complete", "reopen", "delete")
+    TREE_OPS = ("edit", "move")
     REF_OPS = ("add_ref", "edit_ref", "delete_ref")
     RELATION_OPS = ("add_relation", "edit_relation", "delete_relation")
 
@@ -125,7 +130,7 @@ class TaskTransactions(TransactionService):
             data = {**data, "task_id": task_id, "last": number}
             return await super().on_message(ws, {**msg, "data": data})
 
-        if op in self.CASCADE_OPS or op in self.REF_OPS or op in self.RELATION_OPS or op == "edit":
+        if op in self.CASCADE_OPS or op in self.REF_OPS or op in self.RELATION_OPS or op in self.TREE_OPS:
             return await self._guarded(ws, msg, op, data)
 
         return await super().on_message(ws, msg)
@@ -208,6 +213,71 @@ class TaskTransactions(TransactionService):
             ops.extend(r_ops)
             params.extend(r_params)
         return await self.writer.submit(tuple(ops), tuple(params), data, ref=ref)
+
+    async def _op_move(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        """Re-parent one task; every task split from it comes along.
+
+        `parent_task_id = ""` — or `TOP_LEVEL`, which is what the picker
+        sends — moves it to the top level. Only the moved task's own row
+        changes: a Task ID says nothing about where the task sits, so
+        nothing else has to be rewritten.
+        """
+        task_id = data["task_id"]
+        parent = str(data.get("parent_task_id") or "")
+        if parent == TOP_LEVEL:
+            parent = ""
+        if await self._task(task_id) is None:
+            raise ValueError(f"Cannot move: no task {task_id!r}")
+
+        reopen: list[str] = []
+        if parent:
+            if parent == task_id:
+                raise ValueError("Cannot move: a task cannot be split from itself")
+            if await self._task(parent) is None:
+                raise ValueError(f"Cannot move: no task {parent!r}")
+            moved = await self._subtree(task_id, status=None)
+            if parent in moved:
+                raise ValueError(f"Cannot move: {parent} was split from {task_id}")
+            await self._check_no_links_merge(moved, parent)
+            if await self._subtree(task_id, status="open"):
+                # Open work may not hang under a complete parent, the same
+                # rule `reopen` keeps when a child is reopened.
+                reopen = await self._ancestors_and_self(parent, status="complete")
+
+        compiled = self._resolve_ops({"op": "move"})
+        ops = list(compiled)
+        params = [_extract_params(step, {**data, "parent_task_id": parent}) for step in compiled]
+        if reopen:
+            r_ops, r_params = self._steps("reopen", [{**data, "task_id": k} for k in reopen])
+            ops.extend(r_ops)
+            params.extend(r_params)
+        return await self.writer.submit(tuple(ops), tuple(params), data, ref=ref)
+
+    async def _check_no_links_merge(self, moved: list[str], parent: str) -> None:
+        """Refuse a move that would leave a task link inside one tree.
+
+        `add_ref` forbids linking two tasks of the same tree, because
+        splitting already relates them. A move joins the moved subtree to
+        the new parent's tree, so a link across that seam would become one
+        of those — silently. Refusing says which links are in the way; the
+        user unlinks them and moves again.
+        """
+        root = (await self._ancestors_and_self(parent, status=None))[-1]
+        dest = await self._subtree(root, status=None)
+        rows = await self.db.read(
+            "SELECT task_id, relation, href FROM task_refs WHERE kind = 'task'"
+            f" AND task_id IN ({', '.join('?' for _ in moved)})"
+            f" AND href IN ({', '.join('?' for _ in dest)})",
+            (*moved, *dest),
+        )
+        if not rows:
+            return
+        # Short on purpose: mkui clips a dialog's status line to one row.
+        n, r = len(rows), rows[0]
+        s = "s" if n != 1 else ""
+        raise ValueError(
+            f"Cannot move: {r['task_id']} {r['relation']} {r['href']} ({n} link{s}). Unlink first."
+        )
 
     # ── References ────────────────────────────────────────────────────
 

@@ -150,7 +150,7 @@ class TestHttp:
             async with s.get(server + "/api/services") as resp:
                 names = {svc["name"] for svc in await resp.json()}
         assert {"tasks", "all_tasks", "task_refs", "all_relations", "relation_options",
-                "task_options", "mkui_layouts", "mkui_layouts_list", "mkui_layouts_get"} <= names
+                "task_options", "move_options", "mkui_layouts", "mkui_layouts_list", "mkui_layouts_get"} <= names
 
 
 class TestWebSocket:
@@ -491,6 +491,179 @@ class TestSplit:
                 snap = await _recv_json(ws)
                 await ws.send_json({"service": "all_tasks", "type": "unsubscribe", "subid": "F-q"})
         assert [r["title"] for r in snap["rows"]] == ["F-child"]
+
+
+class TestMove:
+    """A move re-parents one task; everything split from it comes along."""
+
+    async def _move(self, ws, task_id, parent, ref, expect="result"):
+        return await _txn(ws, "move", {"task_id": task_id, "parent_task_id": parent,
+                                       "updated_at": NOW}, ref, expect=expect)
+
+    async def _parents(self, ws, subid):
+        return {t: r["parent_task_id"] for t, r in (await _snapshot(ws, subid)).items()}
+
+    async def test_move_reparents_and_promotes(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                root = await _add(ws, "MV-root", "mv1")
+                await _split(ws, root, "MV-child", "mv2")
+                await asyncio.sleep(0.2)
+                child = (await _snapshot(ws, "mv-s1"))["MV-child"]["task_id"]
+                await _split(ws, child, "MV-grandchild", "mv3")
+                host = await _add(ws, "MV-host", "mv4")
+                await asyncio.sleep(0.2)
+
+                await self._move(ws, child, host, "mv5")
+                await asyncio.sleep(0.2)
+                moved = await self._parents(ws, "mv-s2")
+
+                await self._move(ws, child, "__top__", "mv6")  # what the picker sends
+                await asyncio.sleep(0.2)
+                promoted = await self._parents(ws, "mv-s3")
+        assert moved["MV-child"] == host
+        assert moved["MV-grandchild"] == child, "the subtree comes along"
+        assert moved["MV-root"] == ""
+        assert promoted["MV-child"] == "", "the picker's sentinel means the top level"
+        assert promoted["MV-grandchild"] == child
+
+    async def test_an_empty_parent_promotes_too(self, server):
+        """The picker sends `__top__` because mkui's select cannot tell an
+        unmade choice from an empty value; the column's own '' still works."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                root = await _add(ws, "MP-root", "mp1")
+                await _split(ws, root, "MP-child", "mp2")
+                await asyncio.sleep(0.2)
+                child = (await _snapshot(ws, "mp-s1"))["MP-child"]["task_id"]
+                await self._move(ws, child, "", "mp3")
+                await asyncio.sleep(0.2)
+                parents = await self._parents(ws, "mp-s2")
+        assert parents["MP-child"] == ""
+
+    async def test_move_refuses_a_cycle_or_an_unknown_parent(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                root = await _add(ws, "MC-root", "mc1")
+                await _split(ws, root, "MC-child", "mc2")
+                await asyncio.sleep(0.2)
+                child = (await _snapshot(ws, "mc-s1"))["MC-child"]["task_id"]
+
+                r = await self._move(ws, root, root, "mc3", expect="error")
+                assert "itself" in r["message"]
+                r = await self._move(ws, root, child, "mc4", expect="error")
+                assert "was split from" in r["message"]
+                r = await self._move(ws, root, "TKMA99999997", "mc5", expect="error")
+                assert "no task" in r["message"]
+                r = await self._move(ws, "TKMA99999996", "", "mc6", expect="error")
+                assert "no task" in r["message"]
+                await asyncio.sleep(0.2)
+                parents = await self._parents(ws, "mc-s2")
+        assert parents["MC-root"] == "" and parents["MC-child"] == root, "a refused move writes nothing"
+
+    async def test_move_refuses_to_swallow_a_task_link(self, server):
+        """`add_ref` forbids a link inside one tree, so a move that would
+        create one is refused rather than silently dropping the link."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                root = await _add(ws, "ML-root", "ml1")
+                await _split(ws, root, "ML-child", "ml2")
+                other = await _add(ws, "ML-other", "ml3")
+                await asyncio.sleep(0.2)
+                child = (await _snapshot(ws, "ml-s1"))["ML-child"]["task_id"]
+                await _add_ref(ws, child, "ml4", kind="task", relation="blocks", href=other)
+                await asyncio.sleep(0.2)
+
+                r = await self._move(ws, root, other, "ml5", expect="error")
+                assert "blocks" in r["message"] and "(1 link)" in r["message"]
+                parents = await self._parents(ws, "ml-s2")
+                assert parents["ML-root"] == ""
+
+                [link] = [x for x in await _refs(ws, child) if x["kind"] == "task"]
+                await _txn(ws, "delete_ref", {"ref_id": link["ref_id"]}, "ml6")
+                await asyncio.sleep(0.2)
+                await self._move(ws, root, other, "ml7")
+                await asyncio.sleep(0.2)
+                parents = await self._parents(ws, "ml-s3")
+        assert parents["ML-root"] == other, "the move goes through once the link is gone"
+
+    async def test_move_reopens_a_complete_new_parent(self, server):
+        """Open work may not hang under a complete parent: the new ancestors reopen."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                host = await _add(ws, "MR-host", "mr1")
+                await _split(ws, host, "MR-inner", "mr2")
+                await asyncio.sleep(0.2)
+                inner = (await _snapshot(ws, "mr-s1"))["MR-inner"]["task_id"]
+                loose = await _add(ws, "MR-loose", "mr3")
+                await _complete(ws, host, "mr4")
+                await asyncio.sleep(0.2)
+                assert (await _snapshot(ws, "mr-s2"))["MR-host"]["status"] == "complete"
+
+                await self._move(ws, loose, inner, "mr5")
+                await asyncio.sleep(0.2)
+                rows = await _snapshot(ws, "mr-s3")
+        assert rows["MR-loose"]["status"] == "open"
+        assert rows["MR-inner"]["status"] == "open", "the new parent reopens"
+        assert rows["MR-host"]["status"] == "open", "and so does every ancestor of it"
+        assert rows["MR-host"]["completed_at"] == ""
+
+    async def test_a_move_reaches_a_filtered_subscriber(self, server):
+        """The blotter re-nests from the live update alone: a query filtered
+        on the new parent must hear the moved row arrive, and the old
+        parent's must hear it leave."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                old_parent = await _add(ws, "MF-old", "mf1")
+                new_parent = await _add(ws, "MF-new", "mf2")
+                await _split(ws, old_parent, "MF-mover", "mf3")
+                await asyncio.sleep(0.2)
+                mover = (await _snapshot(ws, "mf-s1"))["MF-mover"]["task_id"]
+
+                for subid, parent in (("mf-old", old_parent), ("mf-new", new_parent)):
+                    await ws.send_json({"service": "all_tasks", "type": "subscribe",
+                                        "protocol": "query", "subid": subid, "ref": subid,
+                                        "filter": f"parent_task_id == '{parent}'"})
+                    await _recv_json(ws)  # the opening snapshot
+                # The announcements share the socket with the reply, so read
+                # whatever arrives until both queries have spoken.
+                await ws.send_json({"service": "tasks", "type": "transaction", "op": "move",
+                                    "data": {"task_id": mover, "parent_task_id": new_parent,
+                                             "updated_at": NOW}, "ref": "mf4"})
+                seen, replied = {}, False
+                deadline = time.time() + 5
+                while (len(seen) < 2 or not replied) and time.time() < deadline:
+                    msg = await _recv_json(ws)
+                    if msg.get("type") == "update":
+                        seen[msg["subid"]] = msg
+                    elif msg.get("type") == "result":
+                        replied = True
+                for subid in ("mf-old", "mf-new"):
+                    await ws.send_json({"service": "all_tasks", "type": "unsubscribe", "subid": subid})
+        assert replied, "the move itself is answered"
+        assert set(seen) == {"mf-old", "mf-new"}, seen
+        assert seen["mf-new"]["op"] in ("insert", "update")
+        assert seen["mf-new"]["row"]["task_id"] == mover
+        assert seen["mf-new"]["row"]["parent_task_id"] == new_parent
+        assert seen["mf-old"]["op"] == "delete", "the row leaves the old parent's query"
+
+    async def test_move_options_offer_the_top_level_and_open_outsiders(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                root = await _add(ws, "MO-root", "mo1")
+                await _split(ws, root, "MO-child", "mo2")
+                outside = await _add(ws, "MO-outside", "mo3")
+                finished = await _add(ws, "MO-finished", "mo4")
+                await _complete(ws, finished, "mo5")
+                await asyncio.sleep(0.2)
+                child = (await _snapshot(ws, "mo-s1"))["MO-child"]["task_id"]
+                rows = await _request(ws, "move_options", {"task_id": root})
+        assert rows[0] == {"value": "__top__", "label": "— Top level —"}, "the top level comes first"
+        values = {r["value"] for r in rows}
+        assert outside in values
+        assert root not in values and child not in values, "never its own subtree"
+        assert finished not in values, "a complete task is not offered as a parent"
+        assert next(r["label"] for r in rows if r["value"] == outside).endswith("MO-outside")
 
 
 class TestLiveDelete:

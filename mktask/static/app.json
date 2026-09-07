@@ -363,120 +363,6 @@
           }
         },
         {
-          "label": "Split",
-          "unit": "row",
-          "enable": {
-            "connected": true
-          },
-          "action": {
-            "type": "dialog",
-            "dialog": {
-              "title": "Split Task ID ${row.task_id}",
-              "modal": true,
-              "width": 440,
-              "fields": [
-                {
-                  "name": "parent_task_id",
-                  "type": "hidden",
-                  "value": "${row.task_id}"
-                },
-                {
-                  "label": "Parent",
-                  "type": "readonly",
-                  "value": "${row.title}"
-                },
-                {
-                  "name": "title",
-                  "label": "Child task title",
-                  "type": "text",
-                  "required": true,
-                  "placeholder": "What part of it needs doing?"
-                },
-                {
-                  "row": [
-                    {
-                      "name": "importance",
-                      "label": "Importance",
-                      "type": "select",
-                      "width": 0.5,
-                      "value": "${row.importance}",
-                      "options": [
-                        {
-                          "value": 1,
-                          "label": "1 - Lowest"
-                        },
-                        {
-                          "value": 2,
-                          "label": "2 - Low"
-                        },
-                        {
-                          "value": 3,
-                          "label": "3 - Medium"
-                        },
-                        {
-                          "value": 4,
-                          "label": "4 - High"
-                        },
-                        {
-                          "value": 5,
-                          "label": "5 - Highest"
-                        }
-                      ]
-                    },
-                    {
-                      "name": "urgency",
-                      "label": "Urgency",
-                      "type": "select",
-                      "width": 0.5,
-                      "value": "${row.urgency}",
-                      "options": [
-                        {
-                          "value": 1,
-                          "label": "1 - Lowest"
-                        },
-                        {
-                          "value": 2,
-                          "label": "2 - Low"
-                        },
-                        {
-                          "value": 3,
-                          "label": "3 - Medium"
-                        },
-                        {
-                          "value": 4,
-                          "label": "4 - High"
-                        },
-                        {
-                          "value": 5,
-                          "label": "5 - Highest"
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "name": "due",
-                  "label": "Due (YYYY-MM-DD, optional)",
-                  "type": "text",
-                  "placeholder": "2026-12-31",
-                  "value": "${row.due}"
-                },
-                {
-                  "name": "notes",
-                  "label": "Notes",
-                  "type": "textarea",
-                  "value": ""
-                }
-              ],
-              "submit": {
-                "label": "Split",
-                "service": "tasks",
-                "op": "split"
-              }
-            }
-          }
-        },
-        {
           "label": "Edit",
           "unit": "row",
           "enable": {
@@ -587,6 +473,179 @@
                 "label": "Save",
                 "service": "tasks",
                 "op": "edit"
+              }
+            }
+          }
+        },
+        {
+          "label": "Move",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Move Task ID ${row.task_id}",
+              "modal": true,
+              "width": 600,
+              "fields": [
+                {
+                  "name": "task_id",
+                  "type": "hidden",
+                  "value": "${row.task_id}"
+                },
+                {
+                  "name": "updated_at",
+                  "type": "hidden",
+                  "value": "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+                },
+                {
+                  "label": "Task",
+                  "type": "readonly",
+                  "value": "${row.title}"
+                },
+                {
+                  "label": "Now",
+                  "type": "readonly",
+                  "value": "${IF(row.parent_task_id == '', 'top level', CONCAT('split from Task ID ', row.parent_task_id))}"
+                },
+                {
+                  "name": "parent_task_id",
+                  "label": "Parent",
+                  "type": "select",
+                  "required": true,
+                  "optionsFrom": {
+                    "service": "move_options",
+                    "params": {
+                      "task_id": "${row.task_id}"
+                    },
+                    "value": "value",
+                    "label": "label"
+                  }
+                }
+              ],
+              "footer": {
+                "note": "A moved task takes every task split from it along."
+              },
+              "submit": {
+                "label": "Move",
+                "service": "tasks",
+                "op": "move"
+              }
+            }
+          }
+        },
+        {
+          "label": "Split",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Split Task ID ${row.task_id}",
+              "modal": true,
+              "width": 440,
+              "fields": [
+                {
+                  "name": "parent_task_id",
+                  "type": "hidden",
+                  "value": "${row.task_id}"
+                },
+                {
+                  "label": "Parent",
+                  "type": "readonly",
+                  "value": "${row.title}"
+                },
+                {
+                  "name": "title",
+                  "label": "Child task title",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "What part of it needs doing?"
+                },
+                {
+                  "row": [
+                    {
+                      "name": "importance",
+                      "label": "Importance",
+                      "type": "select",
+                      "width": 0.5,
+                      "value": "${row.importance}",
+                      "options": [
+                        {
+                          "value": 1,
+                          "label": "1 - Lowest"
+                        },
+                        {
+                          "value": 2,
+                          "label": "2 - Low"
+                        },
+                        {
+                          "value": 3,
+                          "label": "3 - Medium"
+                        },
+                        {
+                          "value": 4,
+                          "label": "4 - High"
+                        },
+                        {
+                          "value": 5,
+                          "label": "5 - Highest"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "urgency",
+                      "label": "Urgency",
+                      "type": "select",
+                      "width": 0.5,
+                      "value": "${row.urgency}",
+                      "options": [
+                        {
+                          "value": 1,
+                          "label": "1 - Lowest"
+                        },
+                        {
+                          "value": 2,
+                          "label": "2 - Low"
+                        },
+                        {
+                          "value": 3,
+                          "label": "3 - Medium"
+                        },
+                        {
+                          "value": 4,
+                          "label": "4 - High"
+                        },
+                        {
+                          "value": 5,
+                          "label": "5 - Highest"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "due",
+                  "label": "Due (YYYY-MM-DD, optional)",
+                  "type": "text",
+                  "placeholder": "2026-12-31",
+                  "value": "${row.due}"
+                },
+                {
+                  "name": "notes",
+                  "label": "Notes",
+                  "type": "textarea",
+                  "value": ""
+                }
+              ],
+              "submit": {
+                "label": "Split",
+                "service": "tasks",
+                "op": "split"
               }
             }
           }

@@ -66,7 +66,9 @@ columns = { id = "INTEGER PRIMARY KEY AUTOINCREMENT", app = "TEXT NOT NULL DEFAU
 # task (`relabel_ref`), and a task delete takes the subtree's references
 # with it. The `*_relation` ops manage the relations table: a rename
 # rewrites the wording on every link (`reword_ref`); a delete is refused
-# while links use the relation.
+# while links use the relation. `move` re-parents one task (its subtree
+# comes along): it refuses a cycle and a move that would put a task link
+# inside one tree, and reopens complete new ancestors.
 [services.tasks]
 protocol = "mktask.services.TaskTransactions"
 description = "Add, split, edit, complete, reopen, and delete tasks"
@@ -82,6 +84,9 @@ split = [
 ]
 edit = [
     { table = "tasks", op_type = "update", key = ["task_id"], fields = ["title", "notes", "importance", "urgency", "due", "updated_at"] },
+]
+move = [
+    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["parent_task_id", "updated_at"] },
 ]
 complete = [
     { table = "tasks", op_type = "update", key = ["task_id"], fields = ["completed_at", "updated_at"], defaults = { status = "complete" } },
@@ -162,6 +167,32 @@ WITH RECURSIVE up(task_id, parent_task_id) AS (
 SELECT task_id AS value, task_id || '  ' || title AS label FROM tasks
 WHERE status = 'open' AND task_id != :task_id AND task_id NOT IN (SELECT task_id FROM tree)
 ORDER BY task_id
+"""
+
+# The Move dialog's parent picker: every open task the given task may be moved
+# under, first of all "__top__" for the top level. `down` is the task's own
+# subtree, which it cannot be moved into (a task cannot be its own
+# descendant). The top level is a sentinel rather than '' because mkui's
+# optionsFrom select prepends its own empty "nothing chosen" option and
+# cannot be preselected: with '' the two would be the same entry, and an
+# untouched dialog would promote the task. TaskTransactions maps the
+# sentinel back to ''; `required` in app.json refuses the empty option.
+[services.move_options]
+protocol = "reqrep"
+description = "Tasks a given task may be moved under, as value/label pairs for a dialog select"
+sql = """
+WITH RECURSIVE down(task_id) AS (
+    SELECT task_id FROM tasks WHERE task_id = :task_id
+    UNION ALL
+    SELECT t.task_id FROM tasks t JOIN down ON t.parent_task_id = down.task_id
+)
+SELECT value, label FROM (
+    SELECT 0 AS ord, '__top__' AS value, '\u2014 Top level \u2014' AS label
+    UNION ALL
+    SELECT 1, task_id, task_id || '  ' || title FROM tasks
+    WHERE status = 'open' AND task_id NOT IN (SELECT task_id FROM down)
+)
+ORDER BY ord, value
 """
 
 [services.mkui_layouts]
