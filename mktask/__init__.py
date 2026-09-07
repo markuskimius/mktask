@@ -1,6 +1,6 @@
 """mktask — work task prioritizer built on mkio and mkui."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 def serve(config="mktask.toml", host=None, port=None, db_path=None, user=None, files_dir=None):

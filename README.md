@@ -39,15 +39,26 @@ button adds any of them: pick the kind and the form follows, with the
 label suggested from the URL or the first line of the text. Files are
 added from the Detail pane instead: select a task and drop, paste, or pick
 a file there; an image pastes straight from the clipboard, a pasted URL
-becomes a URL reference, pasted text a snippet. The Detail pane lists every
-reference of the selected task the moment it is selected, **and every
-reference of the tasks split from it** — a section per relation ("Blocks",
-"Blocked by"), then the images, files, URLs, and snippets, each section
+becomes a URL reference, pasted text a snippet. The Detail pane opens with
+the task itself — its status, importance, urgency, score, due date and notes
+— and lists every reference of the selected task the moment it is selected,
+**and every reference of the tasks split from it** — a section per relation ("Blocks",
+"Blocked by"), then the snippets, images, files, and URLs, each section
 counted, and a reference a child owns tagged with its Task ID. **Images show
 as a grid of thumbnails**; clicking one opens it full size under the grid, and
 clicking a snippet or a URL opens it where it stands. The subtree comes from
 the tasks themselves, not from what the blotter is showing, so a completed
-child's references stay with its ancestor. The References pane follows the
+child's references stay with its ancestor.
+
+**The Detail pane edits what it shows.** It has its own toolbar, and one
+cursor: click the task block or click a reference. *Edit* opens the dialog
+that matches — the same Edit dialog the blotter opens for a task, the same
+one the References pane opens for a reference — and *Delete* removes a
+reference (a task is deleted from the blotter, where the row being deleted
+is the row that was picked). An edit shows up here the moment the server
+announces it.
+
+The References pane follows the
 selected tasks (mkui table linking; clear the selection to see every
 reference), with URLs and files as links; selecting one there opens and marks
 the same line in the Detail pane, and a reference the Detail pane does not
@@ -114,8 +125,11 @@ delete cascades, re-parents a task on a move (refusing a cycle or a move
 that would swallow a task link), and manages references and relations (task links are
 written as a mirrored pair, labels follow the linked task's title, a
 renamed relation rewrites its links, orphaned files are removed).
-`static/refs.js` is the one custom widget: the drop box, the reference list of
-the selected task and its descendants (its own live queries), and *Go to*.
+`static/refs.js` is the one custom widget and the whole Detail body: the
+toolbar, the task block, the drop box, the reference list of the selected
+task and its descendants (its own live queries), and *Go to*. Its Edit and
+Delete open the dialogs the Tasks and References panes already declare,
+borrowed from `app.json` by pane and button name rather than copied.
 
 ## Upgrading
 
@@ -129,7 +143,8 @@ stores a link's relation as its wording ("blocked by") rather than a key
 (`blocked_by`): links made before 0.4.0 must be removed and re-added. 0.5.0
 changes no schema — the Detail pane's new reference list reads the tables
 0.4.0 already had, and neither does 0.6.0: moving a task rewrites one
-existing column.
+existing column. 0.7.0 changes no schema either: the Detail pane's toolbar
+sends the ops that were already there.
 
 ## Development
 
@@ -148,7 +163,10 @@ user-defined relations (seeding, uniqueness, rename rewriting links in both
 directions, a swap flipping them, delete refused in use), file upload,
 dedupe, and cleanup, live delete announcements, the query filter, saved
 layouts, the port, host, user, and files flags), and the static integrity of
-`app.json` against `mktask.toml` and `refs.js`.
+`app.json` against `mktask.toml` and `refs.js` (every column, dialog field,
+service, and state path a pane names, the Detail pane's task block and the
+dialogs its toolbar borrows, and the reference sections against the kinds
+the server accepts).
 
 ## License
 

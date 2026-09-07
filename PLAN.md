@@ -413,7 +413,9 @@ Task window was the workaround for not having this; it goes.
   aging/due-date decay, projects/tags, recurring tasks. The `score` derived
   column is the placeholder where this lands; it may move server-side into a
   `reqrep` or computed column later.
-- Custom pane types (task detail editor, quadrant board, calendar).
+- Custom pane types (quadrant board, calendar). The task detail editor
+  landed in 0.7.0: the Detail pane's toolbar edits the task and its
+  references through the dialogs the other panes already declare.
 - Authentication (mkui `auth` + mkio `_mkio_users`) if the app is ever
   multi-user; the per-owner layouts scaffold already supports it.
 - CI workflow (mkui and mkfix have none; add GitHub Actions if wanted).

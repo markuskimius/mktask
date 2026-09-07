@@ -1,27 +1,77 @@
 /* mktask — app-specific overrides on top of mkui's theme. */
 
-/* Detail pane: text widgets render as inline spans; stack them. */
-.task-detail-title,
-.task-detail-parent,
-.task-detail-notes {
+/* The Detail pane: the task-refs widget (static/refs.js) is the whole body —
+   a toolbar over the task block, the drop box, and the references. The pane
+   scrolls as one, so the toolbar sticks to the top of it, below the tab. */
+.task-detail-refs {
   display: block;
-  padding: 0.5em 0.75em 0;
-  white-space: pre-wrap;
 }
 
-.task-detail-title {
+.task-refs-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.task-refs-main {
+  padding: 0.5em 0.75em 0.75em;
+}
+
+/* The task block: one of the pane's two cursor positions, so the whole block
+   takes the mark — Edit then opens the Tasks pane's own Edit dialog. */
+.task-refs-task {
+  padding: 0.3em 0.5em;
+  margin-bottom: 0.5em;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.task-refs-task-marked {
+  background: var(--mkui-bg-alt, rgba(255, 255, 255, 0.08));
+  box-shadow: inset 3px 0 0 var(--mkui-accent, #4ec9b0);
+}
+
+.task-refs-task-empty {
+  color: var(--mkui-fg-mute, #858585);
+}
+
+.task-refs-task-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
   font-weight: bold;
 }
 
-.task-detail-parent {
+.task-refs-task-id {
+  font-family: var(--mkui-mono, monospace);
+  font-weight: normal;
   color: var(--mkui-fg-mute, #858585);
+}
+
+/* Label / value pairs, the labels sized to the widest of them. */
+.task-refs-fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.1em 0.75em;
+  margin-top: 0.35em;
   font-size: 0.9em;
 }
 
-/* References: the task-refs widget (static/refs.js) in the Detail and Linked Task panes. */
-.task-detail-refs {
-  display: block;
-  padding: 0.5em 0.75em 0.75em;
+.task-refs-field-label {
+  color: var(--mkui-fg-mute, #858585);
+}
+
+.task-refs-field-value {
+  overflow-wrap: anywhere;
+}
+
+.task-refs-field-notes,
+.task-refs-field-parent_task_id {
+  white-space: pre-wrap;
+}
+
+.task-refs-field-parent_task_id {
+  font-family: var(--mkui-mono, monospace);
 }
 
 .task-refs-dropbox {
@@ -83,7 +133,8 @@
   border-radius: 3px;
 }
 
-/* The line state.selected_ref points at, when the reference is this task's. */
+/* The line the pane's cursor is on — clicked here, or pointed at by the
+   References pane through state.selected_ref. */
 .task-refs-item-marked {
   background: var(--mkui-bg-alt, rgba(255, 255, 255, 0.08));
   box-shadow: inset 3px 0 0 var(--mkui-accent, #4ec9b0);
@@ -184,7 +235,7 @@
   border-color: var(--mkui-fg-mute, #858585);
 }
 
-/* The tile state.selected_ref points at. */
+/* The tile the pane's cursor is on. */
 .task-refs-tile-marked {
   border-color: var(--mkui-accent, #4ec9b0);
   background: var(--mkui-bg-alt, rgba(255, 255, 255, 0.08));

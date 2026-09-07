@@ -210,12 +210,68 @@ def test_selection_state_declared(app_config):
     assert {"selected_task", "selected_ref"} <= published
 
 
-def test_detail_pane_reads_real_columns(app_config, task_columns):
-    """`state.selected_task.<col>` mirrors a row, so <col> must be a real column."""
-    text = json.dumps(app_config["panes"]["task-detail"])
-    cols = set(re.findall(r"state\.selected_task\.([a-z_]+)", text))
-    assert cols, "the detail pane reads the selected task"
-    assert cols <= task_columns, f"the detail pane reads unknown {cols - task_columns}"
+def _task_fields() -> list:
+    """The fields refs.js shows in the Detail pane's task block."""
+    js = (STATIC / "refs.js").read_text()
+    block = re.search(r"const TASK_FIELDS = \[(.*?)\];", js, re.S)
+    assert block, "refs.js declares the task block's fields"
+    return re.findall(r'\["([a-z_]+)", "([^"]+)"\]', block.group(1))
+
+
+def test_detail_pane_reads_real_columns(app_config, task_columns, tasks_pane):
+    """The task block mirrors a row of `tasks`, so every field it shows is a
+    real column — or the blotter's own derived value, and no other."""
+    names = [name for name, _ in _task_fields()]
+    assert names, "the detail pane shows the selected task's fields"
+    derived = set(tasks_pane.get("values", {}))
+    unknown = set(names) - task_columns - derived
+    assert not unknown, f"the detail pane shows unknown {unknown}"
+    assert "title" not in names, "the title is the block's heading, not a field"
+
+
+def test_detail_pane_edits_what_the_blotter_edits(app_config, server_config):
+    """Everything the task block shows that the `edit` op does not accept is
+    read-only there: it is changed by another button (status by Complete /
+    Reopen, the parent by Move) or by nobody (created_at)."""
+    editable = {f for step in server_config["services"]["tasks"]["ops"]["edit"]
+                for f in step["fields"]}
+    shown = {name for name, _ in _task_fields()}
+    assert {"notes", "due", "importance", "urgency"} <= shown & editable
+    assert not (shown & {"task_id", "last"}), "the block is not a form"
+
+
+def test_the_dialog_module_refs_js_imports_exists():
+    """refs.js opens a dialog with mkui's own `openDialog`, which mkui does not
+    re-export from index.js — mkio-table reaches it by the same deep import.
+    A path this test does not see move is one the browser fails on silently."""
+    import mkui
+
+    js = (STATIC / "refs.js").read_text()
+    path = re.search(r'import\("(/mkui/src/[^"]+)"\)', js)
+    assert path, "refs.js imports the dialog module"
+    module = Path(mkui.static_dir) / path.group(1).removeprefix("/mkui/")
+    assert module.is_file(), f"mkui has no {path.group(1)}"
+    assert "export function openDialog(" in module.read_text()
+
+
+def test_detail_toolbar_borrows_the_pane_dialogs(app_config):
+    """The Detail pane's Edit / Delete open the dialogs the Tasks and
+    References panes already declare — borrowed by name, never copied, so the
+    two places a task or a reference is edited cannot drift apart."""
+    widget = next(w for w in app_config["panes"]["task-detail"]["widgets"]
+                  if w["type"] == "task-refs")
+    dialogs = widget["dialogs"]
+    assert set(dialogs) == {"editTask", "editRef", "deleteRef"}
+    expected = {"editTask": "edit", "editRef": "edit_ref", "deleteRef": "delete_ref"}
+    for name, src in dialogs.items():
+        pane = app_config["panes"][src["pane"]]
+        button = next((b for b in pane["buttons"] if b["label"] == src["button"]), None)
+        assert button, f"{name}: no {src['button']} button on the {src['pane']} pane"
+        assert button["action"]["type"] == "dialog", f"{name} is not a dialog button"
+        assert button["action"]["dialog"]["submit"]["op"] == expected[name]
+    js = (STATIC / "refs.js").read_text()
+    for name in dialogs:
+        assert f'"{name}"' in js, f"refs.js never opens {name}"
 
 
 def test_text_widgets_read_declared_state(app_config):
@@ -285,6 +341,54 @@ def test_detail_pane_shows_the_selected_task_and_its_descendants(server_config):
     assert "CONTAINS([${ids.map(quote).join(\", \")}], task_id)" in js
     assert "refs.has(selectedRefId)" in js, "a reference this pane does not list marks nothing"
     assert "client.unsubscribe(subid)" in js, "one reference subscription at a time"
+
+
+def test_the_detail_pane_is_the_one_widget(app_config):
+    """The widget is the whole Detail body — the task block replaced the text
+    widgets that showed the title and the notes — and every class it paints
+    with has a rule of its own."""
+    pane = app_config["panes"]["task-detail"]
+    assert [w["type"] for w in pane["widgets"]] == ["task-refs"], "one widget, no text widgets"
+    js = (STATIC / "refs.js").read_text()
+    css = (STATIC / "mktask.css").read_text()
+    for cls in ("task-refs-toolbar", "task-refs-main", "task-refs-task", "task-refs-task-marked",
+                "task-refs-task-title", "task-refs-task-id", "task-refs-fields",
+                "task-refs-field-label", "task-refs-field-value"):
+        assert f".{cls}" in css, f"class {cls} has no CSS rule"
+        assert cls in js, f"class {cls} is not used"
+
+
+def test_the_toolbar_acts_on_the_pane_cursor(app_config):
+    """One cursor over the body: the task block or a reference, whichever was
+    clicked last. Edit follows it; Delete is a reference's alone, so a task is
+    never deleted from the pane that shows its notes."""
+    js = (STATIC / "refs.js").read_text()
+    assert '"mkui-table-toolbar task-refs-toolbar"' in js, "mkui's own toolbar classes"
+    assert '"mkui-btn mkui-toolbar-btn"' in js, "mkui's own button classes"
+    for label in ('toolbarBtn("Edit"', 'toolbarBtn("Delete"'):
+        assert label in js, f"the toolbar has no {label}"
+    assert 'openBorrowed("editRef", ref)' in js and 'openBorrowed("editTask", task)' in js,         "Edit opens the dialog the cursor calls for"
+    assert 'openBorrowed("deleteRef", ref)' in js
+    assert "deleteBtn.disabled = !ref" in js, "Delete needs a reference"
+    assert "editBtn.disabled = !ref && !task" in js
+    # A live update republishes the selected row (mkui's publishRow), so the
+    # block repaints without a refetch; only a new Task ID resets the cursor.
+    assert "const changed = id !== taskId" in js and "if (changed)" in js
+
+
+def test_snippets_come_before_the_files():
+    """Section order: what was written down about a task reads before what was
+    filed with it. Task links are not in SECTIONS — they group by relation
+    above these — and `image` is a presentation of `file`, not a fifth kind."""
+    from mktask.services import REF_KINDS
+
+    js = (STATIC / "refs.js").read_text()
+    order = re.findall(r'\["([a-z]+)", "[A-Za-z]+"\]',
+                       re.search(r"const SECTIONS = \[(.*?)\];", js).group(1))
+    assert order == ["text", "image", "file", "url"], f"unexpected section order {order}"
+    assert set(order) - {"image"} == set(REF_KINDS) - {"task"}, \
+        "a reference kind with no section, or a section with no kind"
+    assert 'GRID_SECTIONS = new Set(["image"])' in js, "only the images are a grid"
 
 
 def test_images_preview_as_a_grid_of_thumbnails(server_config):
@@ -434,6 +538,20 @@ def test_delete_buttons_are_red_only_when_armed(app_config):
                 assert not ({"bold", "caps"} & set(rule)), "size-changing keys shift the toolbar"
             assert all(set(r) - {"when"} <= {"color", "background"} for r in rules)
     assert seen == 3, "Tasks, References, and Relations each have a Delete"
+
+
+def test_detail_delete_borrows_the_red(app_config):
+    """The Detail pane paints its Delete from the same button's `when =
+    "enabled"` rule, so the three Deletes cannot end up different reds."""
+    widget = next(w for w in app_config["panes"]["task-detail"]["widgets"]
+                  if w["type"] == "task-refs")
+    src = widget["dialogs"]["deleteRef"]
+    button = next(b for b in app_config["panes"][src["pane"]]["buttons"]
+                  if b["label"] == src["button"])
+    assert any(r.get("when") == "enabled" for r in button["style"])
+    js = (STATIC / "refs.js").read_text()
+    assert 'rule.when === "enabled"' in js, "refs.js reads the armed rule"
+    assert "mkui-btn-styled" in js, "refs.js paints it the way mkui does"
 
 
 def test_row_buttons_declare_row_unit(app_config):

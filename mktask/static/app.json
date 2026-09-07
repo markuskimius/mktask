@@ -847,24 +847,23 @@
       "title": "Detail",
       "widgets": [
         {
-          "type": "text",
-          "text": "${IF(state.selected_task == NULL, 'Select a task to see its notes.', FORMAT('{}  {}', state.selected_task.task_id, state.selected_task.title))}",
-          "class": "task-detail-title"
-        },
-        {
-          "type": "text",
-          "text": "${IF(state.selected_task == NULL || state.selected_task.parent_task_id == '', '', CONCAT('Split from Task ID ', state.selected_task.parent_task_id))}",
-          "class": "task-detail-parent"
-        },
-        {
-          "type": "text",
-          "text": "${IF(state.selected_task == NULL, '', state.selected_task.notes)}",
-          "class": "task-detail-notes"
-        },
-        {
           "type": "task-refs",
           "class": "task-detail-refs",
-          "reveal": true
+          "reveal": true,
+          "dialogs": {
+            "editTask": {
+              "pane": "tasks",
+              "button": "Edit"
+            },
+            "editRef": {
+              "pane": "references",
+              "button": "Edit"
+            },
+            "deleteRef": {
+              "pane": "references",
+              "button": "Delete"
+            }
+          }
         }
       ]
     },

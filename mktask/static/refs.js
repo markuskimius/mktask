@@ -1,7 +1,18 @@
-// The `task-refs` widget: everything about references that mkui's declarative
-// pieces cannot do — accept a pasted or dropped file, upload it, and show the
-// references of the selected task **and of every task split from it**: task
-// links grouped by relation, then files, URLs, and snippets.
+// The `task-refs` widget: the whole Detail body — everything mkui's
+// declarative pieces cannot do. A toolbar, the selected task's own fields,
+// a drop box that accepts a pasted or dropped file, and the references of
+// the selected task **and of every task split from it**: task links grouped
+// by relation, then snippets, images, files, and URLs.
+//
+// The pane has one cursor, over the task block or over a reference, and a
+// toolbar above it whose `Edit` opens the dialog that matches — the Tasks
+// pane's Edit dialog for the task, the References pane's for a reference —
+// while `Delete` is a reference's alone: a task is deleted from the blotter,
+// where the row you are deleting is the row you picked. **The dialogs are
+// borrowed from those panes by name** (`dialogs` in app.json), never copied,
+// so the two places a task is edited cannot drift apart. mkio-table draws
+// its toolbar itself and mkui has none for a widget pane, so this one is
+// drawn here with mkui's own classes.
 //
 // One instance, in the Detail pane. It reads `state.selected_task` (published
 // by the Tasks pane) and holds two live queries of its own — `all_tasks`, for
@@ -37,11 +48,32 @@ const REFS_SERVICE = "task_refs";
 const TASKS_SERVICE = "all_tasks";
 const TASKS_SUBID = "task-refs-tasks";
 
-// The sections below the task links, in the order they are shown. Images are
-// files, but they are shown as a grid of thumbnails: a picture is its own
-// label, and a wall of file names is not.
-const SECTIONS = [["image", "Images"], ["file", "Files"], ["url", "URLs"], ["text", "Snippets"]];
+// The sections below the task links, in the order they are shown: the
+// snippets first, since what was written down about a task reads before what
+// was filed with it. Images are files, but they are shown as a grid of
+// thumbnails: a picture is its own label, and a wall of file names is not.
+const SECTIONS = [["text", "Snippets"], ["image", "Images"], ["file", "Files"], ["url", "URLs"]];
 const GRID_SECTIONS = new Set(["image"]);
+
+// The task's own fields, under the title, in the order the block shows them.
+// `score` is the blotter's derived column (`values.score` in app.json), not a
+// stored one. A field whose value is empty is left out — a top-level task has
+// no parent to name, most tasks have no due date — except those in ALWAYS,
+// which say something by their value alone.
+const TASK_FIELDS = [
+  ["status", "Status"],
+  ["importance", "Importance"],
+  ["urgency", "Urgency"],
+  ["score", "Score"],
+  ["due", "Due"],
+  ["parent_task_id", "Split from"],
+  ["created_at", "Created"],
+  ["notes", "Notes"],
+];
+const ALWAYS = new Set(["status", "importance", "urgency", "score"]);
+
+const fieldValue = (task, name) =>
+  name === "score" ? Number(task.importance) * Number(task.urgency) : task[name];
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -166,7 +198,7 @@ function renderRefBody(ref) {
 
 /**
  * The references as the sections the pane shows: one per relation wording
- * (task links, alphabetically), then Files, URLs, and Snippets. Inside a
+ * (task links, alphabetically), then Snippets, Images, Files, and URLs. Inside a
  * section the selected task's own come first, then each descendant's
  * together, oldest first — so a new reference lands at the end of its own
  * task's run.
@@ -239,12 +271,21 @@ registerWidget("task-refs", (spec, app, host) => {
   box.append(boxText, input);
   statusEl = el("div", "task-refs-status");
   const list = el("div", "task-refs-list");
-  root.append(box, statusEl, list);
+  const taskEl = el("div", "task-refs-task");
+  const toolbar = el("div", "mkui-table-toolbar task-refs-toolbar");
+  const main = el("div", "task-refs-main");
+  main.append(taskEl, box, statusEl, list);
+  root.append(toolbar, main);
 
-  const selectedTask = () => app.state.get("selected_task");
+  let task = null;     // state.selected_task's row, what the block shows
+
+  // The pane's cursor: the task block, or one reference. `null` until a task
+  // is selected. Clicking the block takes the cursor back from a reference.
+  let cursor = null;   // { kind: "task" } | { kind: "ref", ref_id }
+  const setCursor = (next) => { cursor = next; render(); };
+  taskEl.addEventListener("click", () => setCursor(task ? { kind: "task" } : null));
 
   const addRef = async (data) => {
-    const task = selectedTask();
     if (!task) { setStatus("Select a task first.", true); return; }
     const client = await clientP;
     const resp = await client.send("tasks", { task_id: task.task_id, ...data }, { op: "add_ref" });
@@ -272,18 +313,89 @@ registerWidget("task-refs", (spec, app, host) => {
     try { await fn(...args); } catch (e) { setStatus(String(e.message ?? e), true); }
   };
 
+  /** The button `spec.dialogs[name]` points at, on another pane: its dialog
+   *  is opened here, and its `style` is what paints Delete red. */
+  const borrowedButton = (name) => {
+    const src = spec.dialogs?.[name];
+    const pane = app.config.panes?.[src?.pane];
+    return (pane?.buttons ?? []).find((b) => b.label === src?.button) ?? null;
+  };
+
+  /** Open a borrowed dialog over one row. mkui does the rest — the fields,
+   *  the validation, the submit, and the server's refusal in its footer. */
+  const openBorrowed = async (name, row) => {
+    const dialog = borrowedButton(name)?.action?.dialog;
+    if (!dialog) throw new Error(`No ${name} dialog in app.json`);
+    if (!client) throw new Error("Not connected");
+    const { openDialog } = await import("/mkui/src/widgets/mkui-dialog.js");
+    await openDialog(dialog, {
+      row, rows: [row],
+      selection: { count: 1, rowCount: 1, unit: "row" },
+      state: app.state.get(),
+    }, app, { client });
+  };
+
+  /** The reference the cursor is on, if it still exists. */
+  const cursorRef = () => (cursor?.kind === "ref" ? refs.get(cursor.ref_id) ?? null : null);
+
+  const editCursor = guarded(async () => {
+    const ref = cursorRef();
+    if (ref) return openBorrowed("editRef", ref);
+    if (task) return openBorrowed("editTask", task);
+    setStatus("Select a task first.", true);
+  });
+
+  const deleteCursor = guarded(async () => {
+    const ref = cursorRef();
+    if (ref) await openBorrowed("deleteRef", ref);   // the button is off otherwise
+  });
+
+  const toolbarBtn = (label, onClick) => {
+    const btn = el("button", "mkui-btn mkui-toolbar-btn", label);
+    btn.type = "button";
+    btn.addEventListener("click", onClick);
+    toolbar.appendChild(btn);
+    return btn;
+  };
+  const editBtn = toolbarBtn("Edit", editCursor);
+  const deleteBtn = toolbarBtn("Delete", deleteCursor);
+
+  // Delete wears the red the blotter and the References pane paint on theirs,
+  // borrowed from the same button as its dialog: the `when = "enabled"` rule,
+  // red only while the button is armed. Painted the way mkui paints a styled
+  // button — a custom property behind a marker class — so hover and press
+  // still register as a tint on it rather than replacing it.
+  const armedStyle = (borrowedButton("deleteRef")?.style ?? [])
+    .find((rule) => rule.when === "enabled") ?? null;
+
+  /** Edit follows the cursor; Delete is a reference's alone. */
+  function updateButtons() {
+    const ref = cursorRef();
+    editBtn.disabled = !ref && !task;
+    deleteBtn.disabled = !ref;
+    const armed = ref && armedStyle;
+    deleteBtn.classList.toggle("mkui-btn-styled", !!armed);
+    if (armed) {
+      deleteBtn.style.setProperty("--mkui-btn-bg", armedStyle.background);
+      deleteBtn.style.color = armedStyle.color ?? "";
+    } else {
+      deleteBtn.style.removeProperty("--mkui-btn-bg");
+      deleteBtn.style.color = "";
+    }
+  }
+
   const acceptFiles = guarded(async (files) => {
     for (const f of files) await addFile(f, f.name);
   });
 
-  box.addEventListener("click", () => { if (selectedTask()) input.click(); });
+  box.addEventListener("click", () => { if (task) input.click(); });
   input.addEventListener("change", () => { acceptFiles([...input.files]); input.value = ""; });
-  box.addEventListener("dragover", (ev) => { if (selectedTask()) { ev.preventDefault(); box.classList.add("task-refs-dropbox-over"); } });
+  box.addEventListener("dragover", (ev) => { if (task) { ev.preventDefault(); box.classList.add("task-refs-dropbox-over"); } });
   box.addEventListener("dragleave", () => box.classList.remove("task-refs-dropbox-over"));
   box.addEventListener("drop", (ev) => {
     ev.preventDefault();
     box.classList.remove("task-refs-dropbox-over");
-    if (!selectedTask()) return;
+    if (!task) return;
     const files = [...(ev.dataTransfer?.files ?? [])];
     if (files.length) return acceptFiles(files);
     const text = ev.dataTransfer?.getData("text/uri-list") || ev.dataTransfer?.getData("text/plain");
@@ -293,7 +405,7 @@ registerWidget("task-refs", (spec, app, host) => {
   // Paste anywhere while a task is selected and no text field has focus:
   // an image or file uploads, a URL becomes a url reference, text a snippet.
   window.addEventListener("paste", (ev) => {
-    if (!selectedTask() || inTextField() || !root.isConnected) return;
+    if (!task || inTextField() || !root.isConnected) return;
     const dt = ev.clipboardData;
     if (!dt) return;
     const files = [...(dt.files ?? [])];
@@ -337,10 +449,40 @@ registerWidget("task-refs", (spec, app, host) => {
     return out;
   }
 
+  /** The task block: its Task ID and title, then the fields it carries. */
+  function renderTask() {
+    taskEl.replaceChildren();
+    taskEl.classList.toggle("task-refs-task-marked", cursor?.kind === "task");
+    if (!task) {
+      taskEl.appendChild(el("div", "task-refs-task-empty", "Select a task to see its detail."));
+      return;
+    }
+    const head = el("div", "task-refs-task-title");
+    head.appendChild(el("span", "task-refs-task-id", task.task_id));
+    head.appendChild(el("span", "task-refs-task-name", task.title));
+    taskEl.appendChild(head);
+    const fields = el("div", "task-refs-fields");
+    for (const [name, label] of TASK_FIELDS) {
+      const value = fieldValue(task, name);
+      if ((value == null || value === "") && !ALWAYS.has(name)) continue;
+      fields.appendChild(el("span", "task-refs-field-label", label));
+      fields.appendChild(el("span", `task-refs-field-value task-refs-field-${name}`, String(value ?? "")));
+    }
+    taskEl.appendChild(fields);
+  }
+
   function render() {
     if (selectedRefId != null && selectedRefId !== appliedRefId && refs.has(selectedRefId)) {
-      appliedRefId = openId = selectedRefId;   // the References pane's cursor opens its line
+      // The References pane's cursor opens its line here — and takes this
+      // pane's cursor with it, so Edit edits the reference it points at.
+      appliedRefId = openId = selectedRefId;
+      cursor = { kind: "ref", ref_id: selectedRefId };
     }
+    // The reference the cursor was on can be deleted out from under it.
+    if (cursor?.kind === "ref" && !refs.has(cursor.ref_id)) cursor = task ? { kind: "task" } : null;
+    const markedId = cursor?.kind === "ref" ? cursor.ref_id : null;
+    renderTask();
+    updateButtons();
     list.replaceChildren();
     if (!taskId) return;
     const groups = groupRefs(refs.values(), taskId);
@@ -351,16 +493,22 @@ registerWidget("task-refs", (spec, app, host) => {
     for (const group of groups) {
       list.appendChild(el("div", "task-refs-group", `${group.title} (${group.refs.length})`));
       const ownerOf = (ref) => (ref.task_id === taskId ? null : (tasks.get(ref.task_id) ?? {}));
-      const toggle = (ref) => { openId = openId === ref.ref_id ? null : ref.ref_id; render(); };
+      // A click puts the cursor on the reference (what the toolbar acts on)
+      // and, when there is something more to see, opens or closes its body.
+      const pick = (ref) => {
+        cursor = { kind: "ref", ref_id: ref.ref_id };
+        if (hasBody(ref)) openId = openId === ref.ref_id ? null : ref.ref_id;
+        render();
+      };
 
       // Images: a grid of thumbnails, the open one full size beneath it.
       if (group.grid) {
         const grid = el("div", "task-refs-grid");
         for (const ref of group.refs) {
           const tile = renderRefTile(ref, { owner: ownerOf(ref) });
-          if (ref.ref_id === selectedRefId) tile.classList.add("task-refs-tile-marked");
+          if (ref.ref_id === markedId) tile.classList.add("task-refs-tile-marked");
           if (ref.ref_id === openId) tile.classList.add("task-refs-tile-open");
-          tile.addEventListener("click", () => toggle(ref));
+          tile.addEventListener("click", () => pick(ref));
           grid.appendChild(tile);
         }
         list.appendChild(grid);
@@ -372,13 +520,11 @@ registerWidget("task-refs", (spec, app, host) => {
 
       for (const ref of group.refs) {
         const item = el("div", "task-refs-item");
-        if (ref.ref_id === selectedRefId) item.classList.add("task-refs-item-marked");
+        if (ref.ref_id === markedId) item.classList.add("task-refs-item-marked");
         const open = ref.ref_id === openId;
         const line = renderRefLine(ref, { onGoTo: goTo, expanded: open, owner: ownerOf(ref) });
-        if (hasBody(ref)) {
-          line.classList.add("task-refs-line-open");
-          line.addEventListener("click", () => toggle(ref));
-        }
+        if (hasBody(ref)) line.classList.add("task-refs-line-open");
+        line.addEventListener("click", () => pick(ref));
         item.appendChild(line);
         if (open) {
           const body = renderRefBody(ref);
@@ -481,16 +627,24 @@ registerWidget("task-refs", (spec, app, host) => {
     applyScope();   // subscribes to the references when a task is already selected
   }).catch((e) => setStatus(String(e.message ?? e), true));
 
-  app.state.subscribe("selected_task", (task) => {
+  // mkui republishes the selected row when a live update lands on it, so an
+  // edit made from this pane repaints the block on the server's announcement
+  // with no refetch. Only a *different* task resets the cursor and the scope.
+  app.state.subscribe("selected_task", (next) => {
+    const id = next?.task_id ?? null;
+    const changed = id !== taskId;
+    task = next ?? null;
     box.classList.toggle("task-refs-dropbox-disabled", !task);
     boxText.textContent = task
       ? `Drop, paste, or click to add a file, URL, or snippet to ${task.task_id}`
       : "Select a task to add references";
-    setStatus("");
-    if ((task?.task_id ?? null) === taskId) return;
-    taskId = task?.task_id ?? null;
-    openId = appliedRefId = null;
-    applyScope();
+    if (changed) {
+      setStatus("");
+      taskId = id;
+      openId = appliedRefId = null;
+      cursor = task ? { kind: "task" } : null;
+      applyScope();
+    }
     render();
   });
 
