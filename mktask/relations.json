@@ -1,0 +1,4 @@
+[
+  {"forward": "blocks", "backward": "blocked by", "notes": "This task must finish before that one can."},
+  {"forward": "relates to", "backward": "relates to", "notes": "Worth knowing about together."}
+]

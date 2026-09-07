@@ -28,18 +28,27 @@ wrapping (`TKMA100000000` follows `TKMA99999999`).
 A task carries **references**: the things to refer back to while working on
 it. A reference is a URL (including `mailto:` and mail-client links), a
 pasted text snippet (an email, a chat exchange), a file (a screenshot, a
-PDF), or a **link to another task** with a relation (*blocks*, *blocked by*,
-*relates to*). Add a URL or snippet with the Reference button, link tasks
-with the Link button, or select a task and drop, paste, or pick a file in
-the Detail pane: an image pastes straight from the clipboard, a pasted URL
+PDF), or a **link to another task** with a **relation**. One Reference
+button adds any of them: pick the kind and the form follows, with the
+label suggested from the URL or the first line of the text. Files are
+added from the Detail pane instead: select a task and drop, paste, or pick
+a file there; an image pastes straight from the clipboard, a pasted URL
 becomes a URL reference, pasted text a snippet. The References pane follows
 the selected tasks (mkui table linking; clear the selection to see every
-reference), with URLs and files as links; selecting a reference previews it in the Detail pane,
-an image inline. A task link shows on both tasks,
-worded from each side, and *Go to* opens the linked task, with its own
-references, in a Linked Task window. Uploaded files live beside the
-database in `<db>.files/`, named by content hash; deleting the last
-reference to a file, or its task, removes the file.
+reference), with URLs and files as links; selecting a reference previews
+it in the Detail pane, an image inline. A task link shows on both tasks,
+worded from each side, and *Go to* selects the linked task in the blotter,
+so the Detail and References panes follow it (a linked task the current
+filter hides is revealed first). Only tasks from different trees can be
+linked; tasks that share a root are already related by splitting.
+
+**Relations are yours to define** under Tasks › Relations: each is a pair
+of wordings, one from this task to that one ("blocks") and one back
+("blocked by"), or a single wording that reads the same both ways ("relates
+to"). A new database starts with those two. Renaming a relation rewrites
+every link that uses it; a relation in use cannot be deleted. Uploaded
+files live beside the database in `<db>.files/`, named by content hash;
+deleting the last reference to a file, or its task, removes the file.
 
 ## Quick start
 
@@ -81,14 +90,15 @@ python -c "import mktask, pathlib; print(pathlib.Path(mktask.__file__).parent / 
 ```
 
 `mktask.toml` declares the SQLite tables, the mkio services, and the static
-routes; `static/app.json` next to it declares the UI (menus, panes, frames,
-dialogs). Both are plain config — see the mkio and mkui READMEs for the
+routes (keep `relations.json`, the seed for the relations table, beside a
+copied config); `static/app.json` next to it declares the UI (menus, panes,
+frames, dialogs). Both are plain config — see the mkio and mkui READMEs for the
 formats. The one piece of code is `mktask/services.py`, which the `tasks`
 service points at: it assigns Task IDs, runs the complete, reopen, and
-delete cascades, and manages references (task links are written as a
-mirrored pair, labels follow the linked task's title, orphaned files are
-removed). `static/refs.js` is the one custom widget: the drop box, the
-preview, and the Linked Task viewer.
+delete cascades, and manages references and relations (task links are
+written as a mirrored pair, labels follow the linked task's title, a
+renamed relation rewrites its links, orphaned files are removed). `static/refs.js` is the one custom widget: the drop box, the
+preview, and *Go to*.
 
 ## Upgrading
 
@@ -97,6 +107,9 @@ older database. 0.2.0 did (Task IDs, splitting, and `complete` replacing
 `done`): delete a 0.1.0 `mktask.db` before starting a newer version. 0.3.0
 only adds the `task_refs` table, which `auto_migrate` creates in an existing
 database, so a 0.2.0 database carries over as is. 0.3.1 changes no schema.
+0.4.0 adds the `relations` table (created and seeded on first start) and
+stores a link's relation as its wording ("blocked by") rather than a key
+(`blocked_by`): links made before 0.4.0 must be removed and re-added.
 
 ## Development
 
@@ -109,10 +122,12 @@ python -m pytest
 The tests cover the CLI and config loading, Task ID formatting, a real
 server over HTTP and WebSocket (every task op, splitting and the cascades,
 the Task ID sequence across restarts and past eight digits, references and
-task links with their validation and cascades, file upload, dedupe, and
-cleanup, live delete announcements, the query filter, saved layouts, the
-port, host, user, and files flags), and the static integrity of `app.json`
-against `mktask.toml` and `refs.js`.
+task links with their validation, the same-tree rule, and cascades,
+user-defined relations (seeding, uniqueness, rename rewriting links in both
+directions, a swap flipping them, delete refused in use), file upload,
+dedupe, and cleanup, live delete announcements, the query filter, saved
+layouts, the port, host, user, and files flags), and the static integrity of
+`app.json` against `mktask.toml` and `refs.js`.
 
 ## License
 

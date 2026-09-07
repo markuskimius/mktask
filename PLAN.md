@@ -24,6 +24,12 @@ References pane following the selection) shipped as v0.3.0: 168 tests pass
 and every flow was exercised in a browser. v0.3.1 (2026-09-07) moved the
 selection follow onto mkui 0.2.19's table linking.
 
+**Status (2026-09-07):** Phase 8 (user-defined relations, one Reference
+dialog) built on mkui 0.2.22: 175 tests pass, exercised in a browser.
+Phase 9 (Go to selects the task; the Linked Task window removed) built on
+mkui 0.2.23. Phases 8 and 9 shipped together as v0.4.0: 180 tests pass,
+every flow exercised in a browser.
+
 ## Target layout
 
 ```
@@ -264,7 +270,7 @@ task*.
   subtree owns *or is linked to*.
 - **Files on disk, not in SQLite** (query subscribers receive whole rows):
   `<db>.files/` beside the database (`mktask.db.files/`, covered by the
-  `*.db*` gitignore entry; a temp dir for `:memory:`), `--files DIR` to
+  `*.db.files/` gitignore entry; a temp dir for `:memory:`), `--files DIR` to
   override — a CLI/`serve()` argument like `user`, never a TOML key.
   `POST /files` (a custom aiohttp route via `create_app(routes=…)`) stores
   the raw body as `<sha256>.<ext>` under a 20 MB cap, streamed past
@@ -319,6 +325,87 @@ task*.
   filtered read.
 - A per-task Linked Task window (panes are singletons today).
 - Auth on `POST /files` if the app ever leaves loopback.
+
+## Phase 8 — user-defined relations, one Reference dialog (2026-09-07)
+
+Relations between tasks are data the user edits, not a constant in the
+service; every kind of reference, task links included, goes through one
+dialog. Needs mkui 0.2.22 (live dialogs).
+
+- **`relations` table**, one row per pair: `forward` ("blocks"),
+  `backward` ("blocked by"; equal to `forward` for "relates to"), `notes`.
+  Every wording unique across both columns, case-insensitively
+  (service-enforced). Seeded from `relations.json` in the package through
+  mkio's `seed` key, which fires only when the table is first created, so
+  a user who deletes the defaults is not fought.
+- **Links store the wording** in `task_refs.relation`, not an id: no join
+  (mkio cannot keep one live), and a rename rewrites the rows the way link
+  labels already follow a title. `add_ref` looks the wording up for the
+  mirror's inverse; `edit_ref` on a link changes the relation on both
+  halves; `edit_relation` rewrites every link carrying an old wording in
+  the same submit (folding to symmetric included); `delete_relation` is
+  refused while any link uses the pair. The tree rule stays.
+- **One Reference dialog.** `kind` select URL / Text / Task; scratch
+  inputs `_url` and `_task` (never submitted) feed a hidden `href` through
+  `compute`, so the server still sees one field and no dialog names two
+  fields alike; `label` is a live suggestion (`compute` until typed in);
+  title and footer note are templates. The Edit dialog on References
+  became one form too (relation select for a link, readonly label). The
+  relation display template and the widget's word map went. Files stay
+  with the drop box (mkui has no file field).
+- **Relations pane** (`all_relations`; New / Edit / red Delete), opened
+  from the Tasks menu. `backward`'s placeholder is a `${forward}` template
+  so a new relation reads as symmetric until a reverse wording is typed.
+  `relation_options` feeds the dialogs' relation selects.
+- **mkui 0.2.21 regression**: a readonly field without a name rendered
+  blank; worked around with scratch names, then dropped again once mkui
+  0.2.22 fixed it (the package pins 0.2.22).
+- **Tests.** 175: seeding, `relation_options`, add/edit/delete with
+  uniqueness and the symmetric default, rename rewriting links on both
+  sides and both directions, delete refused in use, `edit_ref` changing a
+  link's relation, unknown wordings rejected, the single dialog's fields
+  and computed `href`, the Relations pane, the seed file. Browser: the
+  dialog reshaping by kind, the live label, a link added, a relation
+  created, a delete refused inline, a rename following into the link.
+
+## Phase 9 — "Go to" selects the task; the Linked Task window goes (2026-09-07)
+
+mkui 0.2.23 added `table.select` (`{ pane, keys, focus }` → the table's
+`_select` hook → `selectRows`), so "open the linked task" can mean what it
+should have meant from the start: select it in the Tasks pane. Everything
+that followed a click already follows a programmatic selection —
+`selectRows` runs the same `publishSelection`, so `state.selected_task`
+updates and the References pane's link filter re-broadcasts. The Linked
+Task window was the workaround for not having this; it goes.
+
+- **Go to** (on the task-link preview in the Detail pane) becomes
+  `app.fireAction("table.select", { pane: "tasks", keys: [taskId] })`.
+  `fireAction` returns the table's `{ ok, selected, missing, hidden }`:
+  `selected` needs nothing more (the row is focused, scrolled to, its
+  collapsed ancestors opened); `hidden` means a filter hides it — in
+  practice the default "open only" filter and a complete linked task — so
+  the widget's status line says "TKMA… is hidden by a filter (Tasks › Show
+  All)" and, when `spec.reveal` is set, clears the status filter with
+  `table.filter` and selects again; `missing` means the task is gone
+  (deleted under a stale reference) and says so. Filters are never
+  touched without that opt-in.
+- **Remove**: the `linked-task` pane, its Tasks-menu entry, `state.linked_task`,
+  the `linked` mode of the `task-refs` widget and its CSS, and the
+  `task_get` and `task_refs_get` reqreps (nothing else calls them). The
+  `task-refs` widget keeps the drop box, the preview, and Go to.
+- **Keep**: the References pane, table linking, the Relations pane,
+  `task_options` and `relation_options` (the dialogs use them).
+- **Pin** mkui ≥ 0.2.23.
+- **Tests.** 180 across phases 8 and 9. `test_ui_config.py`: no `linked-task` pane or state,
+  every reqrep named by a dialog or `refs.js` and every such name a real
+  reqrep (neither side goes stale), `refs.js` fires `table.select` on the
+  `tasks` pane and never `pane.show` and handles all three outcomes,
+  installed mkui ≥ 0.2.23. `test_server.py`: `_refs` now reads through the
+  live `task_refs` query with the pane's own server-side filter rather
+  than the deleted reqrep, which tests the path the app uses. Browser: Go
+  to selects the linked task (Detail and References follow, and the
+  mirror's Go to walks back), and on a complete linked task under "open
+  only" it reveals and selects, saying "(showing all tasks)".
 
 ## Deferred (not in the skeleton)
 

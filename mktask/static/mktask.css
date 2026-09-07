@@ -55,15 +55,10 @@
   color: #f44747;
 }
 
-.task-refs-preview,
-.task-refs-list {
+.task-refs-preview {
   margin-top: 0.5em;
 }
 
-.task-refs-item {
-  padding: 0.35em 0;
-  border-top: 1px solid var(--mkui-border, #333);
-}
 
 .task-refs-line {
   display: flex;
@@ -136,7 +131,3 @@
   border-radius: 3px;
 }
 
-.task-refs-empty {
-  color: var(--mkui-fg-mute, #858585);
-  font-style: italic;
-}

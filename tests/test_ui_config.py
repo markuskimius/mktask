@@ -89,8 +89,8 @@ def test_transaction_fields_are_declared(app_config, server_config):
                        if d.get("submit") is node), None)
         if dialog is not None:
             for field in _walk(dialog["fields"]):
-                if "name" in field:
-                    sent.add(field["name"])
+                if "name" in field and not field["name"].startswith("_") and field.get("type") != "readonly":
+                    sent.add(field["name"])  # `_x` is scratch, readonly is display: neither is sent
         assert sent <= allowed, f"{node['service']}.{node['op']} sends undeclared {sent - allowed}"
 
 
@@ -212,11 +212,10 @@ def test_selection_state_declared(app_config):
 
 def test_detail_pane_reads_real_columns(app_config, task_columns):
     """`state.selected_task.<col>` mirrors a row, so <col> must be a real column."""
-    for pane_id, root in (("task-detail", "selected_task"), ("linked-task", "linked_task")):
-        text = json.dumps(app_config["panes"][pane_id])
-        cols = set(re.findall(rf"state\.{root}\.([a-z_]+)", text))
-        assert cols, f"{pane_id} reads state.{root}"
-        assert cols <= task_columns, f"{pane_id} reads unknown {cols - task_columns}"
+    text = json.dumps(app_config["panes"]["task-detail"])
+    cols = set(re.findall(r"state\.selected_task\.([a-z_]+)", text))
+    assert cols, "the detail pane reads the selected task"
+    assert cols <= task_columns, f"the detail pane reads unknown {cols - task_columns}"
 
 
 def test_text_widgets_read_declared_state(app_config):
@@ -249,22 +248,51 @@ def test_custom_widgets_are_registered(app_config):
 
 
 def test_task_refs_widget_state_and_services(app_config, server_config):
-    """refs.js reads selected_task, selected_ref, and linked_task, calls two
-    request-reply services, opens the Linked Task pane, and posts to /files."""
+    """refs.js reads the two published selections, calls only declared ops,
+    and opens a linked task by selecting it in the Tasks pane."""
     js = (STATIC / "refs.js").read_text()
-    for root in ("selected_task", "selected_ref", "linked_task"):
+    for root in ("selected_task", "selected_ref"):
         assert root in app_config["state"], root
         assert f'"{root}"' in js, f"refs.js does not read state.{root}"
-    for svc in re.findall(r'request\("([a-z_]+)"', js):
-        assert server_config["services"][svc]["protocol"] == "reqrep", svc
     for op in re.findall(r'op: "([a-z_]+)"', js):
         assert op in server_config["services"]["tasks"]["ops"], op
-    assert 'fireAction("pane.show"' in js
-    assert '"linked-task"' in js and "linked-task" in app_config["panes"]
-    assert "table.filter" not in js, "the References pane follows the selection through mkui's table linking"
+    assert "table.filter" not in js.split("reveal")[0], \
+        "the References pane follows the Tasks selection through mkui's table linking"
     assert 'const UPLOAD_URL = "/files"' in js
-    modes = {w.get("mode") for p in app_config["panes"].values() for w in p.get("widgets", []) if w["type"] == "task-refs"}
-    assert modes == {None, "linked"}, "one drop box in Detail, one viewer in Linked Task"
+    widgets = [w for p in app_config["panes"].values() for w in p.get("widgets", []) if w["type"] == "task-refs"]
+    assert len(widgets) == 1 and "mode" not in widgets[0], "one widget, in the Detail pane"
+
+
+def test_go_to_selects_the_linked_task(app_config):
+    """mkui >= 0.2.23: `table.select` on the Tasks pane publishes the row as a
+    click does, so the Detail and References panes follow. No viewer pane."""
+    import mkui
+    assert tuple(int(x) for x in mkui.__version__.split(".")[:3]) >= (0, 2, 23)
+    js = (STATIC / "refs.js").read_text()
+    assert 'fireAction("table.select"' in js
+    assert 'app.fireAction("table.select", { pane: tasksPane, keys: [taskId] })' in js
+    assert 'spec.tasksPane ?? "tasks"' in js, "targets the Tasks pane by default"
+    assert "pane.show" not in js, "Go to selects the task; it opens no window"
+    for gone in ("linked-task", "linked_task"):
+        assert gone not in json.dumps(app_config), f"{gone} went with the Linked Task pane"
+    assert "linked-task" not in app_config["panes"]
+    # the three outcomes table.select reports are all handled
+    for outcome in ("selected", "hidden", "missing"):
+        assert f"result?.{outcome}" in js, f"refs.js ignores a {outcome} result"
+
+
+def test_every_lookup_service_is_used_and_exists(app_config, server_config):
+    """A reqrep is named by a dialog's optionsFrom or by refs.js, and every
+    such name is a real reqrep: neither side goes stale on its own."""
+    js = (STATIC / "refs.js").read_text()
+    wanted = set(re.findall(r'request\("([a-z_]+)"', js))
+    wanted |= {n.get("optionsFrom", {}).get("service") for n in _walk(app_config["panes"])
+               if isinstance(n, dict) and "optionsFrom" in n}
+    wanted.discard(None)
+    reqreps = {name for name, svc in server_config["services"].items() if svc["protocol"] == "reqrep"}
+    mkui_owned = {n for n in reqreps if n.startswith("mkui_")}  # mkui's layout store calls these itself
+    assert wanted <= reqreps, f"unknown lookup service {wanted - reqreps}"
+    assert reqreps - mkui_owned <= wanted, f"unused lookup service {reqreps - mkui_owned - wanted}"
 
 
 # ─── Dialogs ───────────────────────────────────────────────────────
@@ -339,7 +367,7 @@ def test_delete_buttons_are_red_only_when_armed(app_config):
             for rule in rules:
                 assert not ({"bold", "caps"} & set(rule)), "size-changing keys shift the toolbar"
             assert all(set(r) - {"when"} <= {"color", "background"} for r in rules)
-    assert seen == 2, "Tasks and References each have a Delete"
+    assert seen == 3, "Tasks, References, and Relations each have a Delete"
 
 
 def test_row_buttons_declare_row_unit(app_config):
@@ -411,87 +439,110 @@ def _dialog_by_op(app_config, pane_id, op, label=None):
     raise AssertionError(f"{pane_id} has no {op} dialog")
 
 
-def test_reference_dialog_offers_url_and_text(app_config):
+def _fields(dialog):
+    return {f["name"]: f for f in _walk(dialog["fields"]) if "name" in f}
+
+
+def test_one_reference_dialog_for_every_kind(app_config, server_config):
+    """URL, text, and task link share one dialog. Distinct scratch inputs
+    (`_url`, `_task`) feed one computed hidden `href`, so the server sees a
+    single field and no dialog ever names two fields alike (mkui ≥ 0.2.21)."""
     from mktask.services import REF_KINDS
-    dialog = _dialog_by_op(app_config, "tasks", "add_ref", "Reference")
-    fields = {f["name"]: f for f in _walk(dialog["fields"]) if "name" in f}
-    assert fields["task_id"]["type"] == "hidden" and fields["task_id"]["value"] == "${row.task_id}"
-    kinds = [o["value"] for o in fields["kind"]["options"]]
-    assert kinds == ["url", "text"] and set(kinds) <= set(REF_KINDS)
-    assert fields["href"]["showWhen"] == "kind == 'url'" and fields["href"]["required"] is True
-    assert fields["body"]["showWhen"] == "kind == 'text'" and fields["body"]["required"] is True
+    tasks = app_config["panes"]["tasks"]
+    assert [b["label"] for b in tasks["buttons"] if b["label"] in ("Reference", "Link")] == ["Reference"]
+    dialog = _dialog_by_op(app_config, "tasks", "add_ref")
+    f = _fields(dialog)
+    assert f["task_id"] == {"name": "task_id", "type": "hidden", "value": "${row.task_id}"}
+    kinds = [o["value"] for o in f["kind"]["options"]]
+    assert kinds == ["url", "text", "task"] and set(kinds) < set(REF_KINDS), "file goes through the drop box"
+    assert f["_url"]["showWhen"] == "kind == 'url'" and f["_url"]["required"] is True
+    assert f["body"]["showWhen"] == "kind == 'text'" and f["body"]["required"] is True
+    assert f["relation"]["showWhen"] == "kind == 'task'" and f["_task"]["showWhen"] == "kind == 'task'"
+    assert f["href"]["type"] == "hidden" and "showWhen" not in f["href"], "always submitted"
+    assert f["href"]["compute"] == "IF(kind == 'task', _task, IF(kind == 'url', _url, ''))"
+    assert f["label"]["showWhen"] == "kind != 'task'" and "compute" in f["label"], "a live suggestion"
+    assert "${" in dialog["title"] and "${" in dialog["footer"]["note"], "title and note follow the kind"
+    for name, params in (("relation", None), ("_task", {"task_id": "${row.task_id}"})):
+        src = f[name]["optionsFrom"]
+        svc = server_config["services"][src["service"]]
+        assert svc["protocol"] == "reqrep"
+        assert {src["value"], src["label"]} == {"value", "label"} and "value" in svc["sql"] and "label" in svc["sql"]
+        assert src.get("params") == params
+        for p in (params or {}):
+            assert f":{p}" in svc["sql"], "the select's params feed the SQL"
 
 
-def test_link_dialog_picks_a_task_by_title(app_config, server_config):
-    from mktask.services import RELATIONS
-    dialog = _dialog_by_op(app_config, "tasks", "add_ref", "Link")
-    fields = {f["name"]: f for f in _walk(dialog["fields"]) if "name" in f}
-    assert fields["kind"] == {"name": "kind", "type": "hidden", "value": "task"}
-    assert [o["value"] for o in fields["relation"]["options"]] == list(RELATIONS)
-    href = fields["href"]
-    assert href["required"] is True
-    source = href["optionsFrom"]
-    svc = server_config["services"][source["service"]]
-    assert svc["protocol"] == "reqrep"
-    assert f":{next(iter(source['params']))}" in svc["sql"], "the select's params feed the SQL"
-    assert source["params"]["task_id"] == "${row.task_id}", "excludes the task itself"
-    assert {source["value"], source["label"]} == {"value", "label"}
-    assert "value" in svc["sql"] and "label" in svc["sql"]
-
-
-def test_references_pane_links_and_words_relations(references_pane):
-    from mktask.services import RELATIONS
+def test_references_pane_shows_the_stored_wording(references_pane):
     label = references_pane["display"]["label"]
     assert "LINK(label, href)" in label, "a reference with an href is a hyperlink"
     assert "kind == 'task'" in label, "a Task ID is not a hyperlink"
-    relation = references_pane["display"]["relation"]
-    for name in RELATIONS:
-        assert f"relation == '{name}'" in relation, f"{name} is worded for display"
+    assert "relation" not in references_pane.get("display", {}), "the wording is the value"
     assert references_pane["select"]["state"] == "selected_ref"
     assert references_pane["service"] == "task_refs"
 
 
-def test_reference_edit_never_touches_a_task_link(app_config):
+def test_one_edit_dialog_for_every_kind(app_config):
     pane = app_config["panes"]["references"]
     edit = next(b for b in pane["buttons"] if b["label"] == "Edit")
-    assert "row.kind != 'task'" in edit["enable"]["when"]
+    assert edit["enable"] == {"connected": True}, "task links are editable too (their relation)"
     dialog = edit["action"]["dialog"]
     assert _hidden(dialog, "ref_id") == "${row.ref_id}"
-    fields = {f["name"]: f for f in _walk(dialog["fields"]) if "name" in f}
-    assert fields["href"]["showWhen"] == "row.kind == 'url'"
-    assert fields["body"]["showWhen"] == "row.kind == 'text'"
+    f = _fields(dialog)
+    assert f["relation"]["showWhen"] == "row.kind == 'task'" and f["relation"]["value"] == "${row.relation}"
+    assert f["relation"]["optionsFrom"]["service"] == "relation_options"
+    assert f["label"]["showWhen"] == "row.kind != 'task'", "a link's label follows the linked task"
+    assert f["href"]["showWhen"] == "row.kind == 'url'"
+    assert f["body"]["showWhen"] == "row.kind == 'text'"
+    linked = next(x for x in _walk(dialog["fields"]) if x.get("label") == "Linked task")
+    assert linked["type"] == "readonly" and linked["showWhen"] == "row.kind == 'task'" and "name" not in linked
     delete = _dialog_by_op(app_config, "references", "delete_ref")
     assert _hidden(delete, "ref_id") == "${row.ref_id}"
 
 
-def test_reference_kinds_and_relations_match_the_service(server_config):
-    from mktask.services import RELATIONS, REF_KINDS
+def test_readonly_lines_carry_no_name(app_config):
+    """Display-only lines need no name since mkui 0.2.22 (0.2.21 blanked nameless ones)."""
+    for dialog in _dialogs(app_config):
+        for f in _walk(dialog["fields"]):
+            if f.get("type") == "readonly":
+                assert "name" not in f, f"{dialog['title']}: readonly {f.get('label')!r} needs no name"
+
+
+def test_relations_pane_and_dialogs(app_config, server_config):
+    pane = app_config["panes"]["relations"]
+    assert pane["service"] == "all_relations"
+    assert set(pane["columns"]) == {"forward", "backward", "notes"}
+    by_label = {b["label"]: b["action"]["dialog"] for b in pane["buttons"]}
+    assert set(by_label) == {"New", "Edit", "Delete"}
+    new = _fields(by_label["New"])
+    assert new["forward"]["required"] is True and "required" not in new["backward"], "blank backward = symmetric"
+    assert "${forward}" in new["backward"]["placeholder"], "the placeholder shows the symmetric default live"
+    edit = _fields(by_label["Edit"])
+    assert _hidden(by_label["Edit"], "relation_id") == "${row.relation_id}"
+    assert edit["forward"]["value"] == "${row.forward}"
+    assert "row.forward == row.backward" in edit["backward"]["value"], "a symmetric pair shows a blank backward"
+    assert _hidden(by_label["Delete"], "relation_id") == "${row.relation_id}"
+    assert "relations" in {i["args"] for i in _walk(app_config["menubar"]) if i.get("action") == "pane.show"}
+
+
+def test_relations_are_seeded_from_the_package(server_config):
+    table = server_config["tables"]["relations"]
+    assert table["seed"] == "relations.json"
+    seed = json.loads((PKG / "relations.json").read_text())
+    assert {r["forward"] for r in seed} == {"blocks", "relates to"}
+    wordings = [w for r in seed for w in {r["forward"], r["backward"]}]
+    assert len(wordings) == len({w.lower() for w in wordings}), "seed wordings are unique"
+    assert set(seed[0]) <= set(table["columns"])
+
+
+def test_reference_kinds_match_the_service(server_config):
+    from mktask.services import REF_KINDS
     comment = (PKG / "mktask.toml").read_text()
     for kind in REF_KINDS:
         assert f'"{kind}"' in comment, f"kind {kind} is documented in the TOML"
-    for relation in RELATIONS:
-        assert f'"{relation}"' in comment, f"relation {relation} is documented in the TOML"
     add_ref = server_config["services"]["tasks"]["ops"]["add_ref"][0]
     assert add_ref["defaults"]["kind"] == "url"
     assert "task_refs" in server_config["tables"]
     assert set(server_config["services"]["task_refs"]["filterable"]) == {"task_id", "kind", "relation"}
-
-
-def test_references_follow_the_tasks_selection_by_link(app_config, server_config):
-    """mkui table linking (≥ 0.2.19): Tasks broadcasts its Task ID under a name,
-    References filters its own task_id column by it, with the toolbar chips off
-    since the link is part of the setup, not something to fiddle with."""
-    tasks, refs = app_config["panes"]["tasks"], app_config["panes"]["references"]
-    assert tasks["link"] == {"broadcast": {"task_id": "task_id"}, "chips": False}
-    assert refs["link"] == {"listen": {"task_id": "task_id"}, "chips": False}
-    for name, col in tasks["link"]["broadcast"].items():
-        assert col in _columns_of(tasks, server_config)
-        listened = refs["link"]["listen"][name]
-        listened = listened["column"] if isinstance(listened, dict) else listened
-        assert listened in _columns_of(refs, server_config)
-    assert "task_id" not in refs.get("filters", {}), "the link supplies the filter"
-    import mkui
-    assert tuple(int(x) for x in mkui.__version__.split(".")[:3]) >= (0, 2, 19)
 
 
 def test_main_frame_stacks_tasks_over_references(app_config):
@@ -531,7 +582,7 @@ def test_frames_place_every_pane_once_or_menu_reaches_it(app_config):
     assert set(placed) <= set(app_config["panes"])
     shown = {i["args"] for i in _walk(app_config["menubar"]) if i.get("action") == "pane.show"}
     assert shown == set(app_config["panes"]), "the Tasks menu shows every pane"
-    assert "linked-task" not in placed, "opened on demand, not at start"
+    assert "relations" not in placed, "opened on demand, not at start"
     assert {"tasks", "references", "task-detail"} <= set(placed)
     for frame in app_config["frames"]:
         assert 0 <= frame["x"] and frame["x"] + frame["w"] <= 1
@@ -562,7 +613,8 @@ def test_every_transaction_field_has_default_or_is_sent(app_config, server_confi
         sent = set(node.get("data", {}))
         dialog = next((d for d in _walk(app_config["panes"]) if d.get("submit") is node), None)
         if dialog is not None:
-            sent |= {f["name"] for f in _walk(dialog["fields"]) if "name" in f}
+            sent |= {f["name"] for f in _walk(dialog["fields"])
+                     if "name" in f and not f["name"].startswith("_") and f.get("type") != "readonly"}
         for op in ops:
             required = set(op.get("fields", [])) | set(op.get("key", []))
             required -= set(op.get("defaults", {}))

@@ -3,27 +3,24 @@
 // selected reference (an image inline, a snippet in full, a task link with a
 // way to open the linked task).
 //
-// Two modes, both reading app state that mkio-table panes publish:
+// One instance, in the Detail pane, over app state the mkio-table panes
+// publish: a drop box for `state.selected_task` — drop or paste a file,
+// paste a URL or some text, or click to choose a file — and a preview of
+// `state.selected_ref`, the row selected in the References pane. (That pane
+// follows the Tasks selection through mkui's table linking —
+// `link.broadcast` / `link.listen` in app.json — not here.)
 //
-//   { type: "task-refs" }                  (Detail pane)
-//     A drop box for `state.selected_task` — drop or paste a file, paste a
-//     URL or some text, or click to choose a file — and a preview of
-//     `state.selected_ref`, the row selected in the References pane. (The
-//     References pane follows the Tasks selection through mkui's table
-//     linking — `link.broadcast` / `link.listen` in app.json — not here.)
-//
-//   { type: "task-refs", mode: "linked" }  (Linked Task pane)
-//     The references of `state.linked_task`, fetched once per task through
-//     the `task_refs_get` request-reply service. A viewer, not a live pane.
-//
-// "Go to" on a task link fetches that task (`task_get`), publishes it as
-// `state.linked_task`, and shows the Linked Task pane (`pane.show`), so a
-// chain of links can be followed without touching the selection in Tasks.
+// "Go to" on a task link selects the linked task in the Tasks pane
+// (`table.select`, mkui ≥ 0.2.23). Selecting it there is the whole job:
+// mkui publishes the row exactly as a click does, so the Detail pane and
+// the References pane's link filter follow on their own. A key the pane's
+// filters hide comes back `hidden` rather than selected — the default
+// filter shows open tasks only, so a complete linked task lands there —
+// and `reveal` (config) then clears the status filter and tries again.
 
 import { registerWidget, ensureMkio } from "/mkui/src/index.js";
 
 const UPLOAD_URL = "/files";
-const RELATION_WORDS = { blocks: "blocks", blocked_by: "blocked by", relates: "relates to" };
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -57,7 +54,7 @@ function renderRefLine(ref, { onGoTo } = {}) {
   const line = el("div", "task-refs-line");
   line.appendChild(el("span", `task-refs-kind task-refs-kind-${ref.kind}`, ref.kind));
   if (ref.kind === "task") {
-    line.appendChild(el("span", "task-refs-relation", RELATION_WORDS[ref.relation] ?? ref.relation));
+    line.appendChild(el("span", "task-refs-relation", ref.relation));
     line.appendChild(el("span", "task-refs-taskid", ref.href));
     line.appendChild(el("span", "task-refs-label", ref.label));
     if (onGoTo) {
@@ -98,13 +95,29 @@ registerWidget("task-refs", (spec, app, host) => {
   host.appendChild(root);
   const clientP = ensureMkio(app.config.mkio.url);
 
-  const goTo = async (taskId) => {
-    const client = await clientP;
-    const resp = await client.request("task_get", { task_id: taskId });
-    const row = (resp?.rows ?? [])[0] ?? null;
-    if (!row) { setStatus(`No task ${taskId}`); return; }
-    app.state.set("linked_task", row);
-    app.fireAction("pane.show", spec.linkedPane ?? "linked-task");
+  const tasksPane = spec.tasksPane ?? "tasks";
+
+  const select = (taskId) =>
+    app.fireAction("table.select", { pane: tasksPane, keys: [taskId] });
+
+  const goTo = (taskId) => {
+    let result = select(taskId);
+    let revealed = false;
+    if (result?.hidden?.length && spec.reveal) {
+      // Opt-in: drop the status filter (the usual reason a linked task is
+      // out of view) and try once more. Other filters are left alone.
+      app.fireAction("table.filter", { pane: tasksPane, filters: { status: null }, merge: true });
+      result = select(taskId);
+      revealed = !!result?.selected?.length;
+    }
+    if (result?.selected?.length) {
+      return setStatus(revealed ? `Selected ${taskId} (showing all tasks)` : `Selected ${taskId}`);
+    }
+    if (result?.hidden?.length) {
+      return setStatus(`${taskId} is hidden by a filter (Tasks \u203a Show All)`, true);
+    }
+    if (result?.missing?.length) return setStatus(`No task ${taskId}`, true);
+    setStatus(`Cannot open ${taskId}`, true);
   };
 
   let statusEl = null;
@@ -114,31 +127,7 @@ registerWidget("task-refs", (spec, app, host) => {
     statusEl.classList.toggle("task-refs-error", isError);
   };
 
-  if (spec.mode === "linked") {
-    const list = el("div", "task-refs-list");
-    root.appendChild(list);
-    let current = null;
-    app.state.subscribe("linked_task", async (task) => {
-      list.replaceChildren();
-      if (!task) { list.appendChild(el("div", "task-refs-empty", "Follow a task link to open a task here.")); return; }
-      current = task.task_id;
-      const client = await clientP;
-      const resp = await client.request("task_refs_get", { task_id: task.task_id });
-      if (current !== task.task_id) return;
-      const rows = resp?.rows ?? [];
-      if (!rows.length) { list.appendChild(el("div", "task-refs-empty", "No references.")); return; }
-      for (const ref of rows) {
-        const item = el("div", "task-refs-item");
-        item.appendChild(renderRefLine(ref, { onGoTo: goTo }));
-        const body = renderRefBody(ref);
-        if (body) item.appendChild(body);
-        list.appendChild(item);
-      }
-    });
-    return;
-  }
-
-  // ── Detail pane: drop box + selected reference ──────────────────────
+  // ── The drop box and the selected reference ─────────────────────────
 
   const box = el("div", "task-refs-dropbox");
   const boxText = el("span", "task-refs-dropbox-text");

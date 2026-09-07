@@ -3,7 +3,7 @@
 import pytest
 
 from mktask.services import (
-    FILES_ROUTE, REF_KINDS, RELATIONS, TASK_ID_PATTERN, default_label, format_task_id, user_prefix,
+    FILES_ROUTE, REF_KINDS, SEED_RELATIONS, TASK_ID_PATTERN, default_label, format_task_id, user_prefix,
 )
 
 
@@ -55,10 +55,14 @@ def test_default_label(kind, href, body, expected):
     assert default_label(kind, href, body) == expected
 
 
-def test_relations_come_in_inverse_pairs():
-    for relation, inverse in RELATIONS.items():
-        assert RELATIONS[inverse] == relation, f"{relation} <-> {inverse} is not symmetric"
-    assert RELATIONS["relates"] == "relates"
+def test_seed_relations_are_well_formed():
+    import json
+    seed = json.loads(SEED_RELATIONS.read_text())
+    assert {r["forward"] for r in seed} == {"blocks", "relates to"}
+    wordings = [w for r in seed for w in {r["forward"], r["backward"]}]
+    assert wordings and len(wordings) == len({w.lower() for w in wordings}), "unique across both columns"
+    assert all(w == w.strip() and w for w in wordings)
+    assert next(r for r in seed if r["forward"] == "relates to")["backward"] == "relates to", "symmetric"
 
 
 def test_reference_kinds():

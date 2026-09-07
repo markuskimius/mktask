@@ -12,6 +12,10 @@ import aiohttp
 import pytest
 
 from mktask import __version__
+from mktask.services import SEED_RELATIONS
+
+SEED = json.loads(SEED_RELATIONS.read_text())
+WORDINGS = sorted({w for r in SEED for w in (r["forward"], r["backward"])})  # every direction of every seeded pair
 
 
 def _free_port() -> int:
@@ -101,14 +105,21 @@ async def _request(ws, service, data):
 
 
 async def _add(ws, title, ref):
-    """Add a task and return its Task ID (from the task_get lookup by title order)."""
+    """Add a task and return its Task ID, read back from an `all_tasks` snapshot."""
     await _txn(ws, "add", {"title": title}, ref)
     rows = await _snapshot(ws, f"s-{ref}")
     return rows[title]["task_id"]
 
 
 async def _refs(ws, task_id):
-    return await _request(ws, "task_refs_get", {"task_id": task_id})
+    """A task's references, newest first — through the live `task_refs` query
+    with the same server-side filter the References pane subscribes with."""
+    await ws.send_json({"service": "task_refs", "type": "subscribe", "protocol": "query",
+                        "subid": f"r-{task_id}", "ref": f"r-{task_id}",
+                        "filter": f"task_id == '{task_id}'"})
+    snap = await _recv_json(ws)
+    await ws.send_json({"service": "task_refs", "type": "unsubscribe", "subid": f"r-{task_id}"})
+    return sorted(snap["rows"], key=lambda r: r["ref_id"], reverse=True)
 
 
 async def _add_ref(ws, task_id, ref, expect="result", **fields):
@@ -138,8 +149,8 @@ class TestHttp:
         async with aiohttp.ClientSession() as s:
             async with s.get(server + "/api/services") as resp:
                 names = {svc["name"] for svc in await resp.json()}
-        assert {"tasks", "all_tasks", "task_refs", "task_get", "task_refs_get", "task_options",
-                "mkui_layouts", "mkui_layouts_list", "mkui_layouts_get"} <= names
+        assert {"tasks", "all_tasks", "task_refs", "all_relations", "relation_options",
+                "task_options", "mkui_layouts", "mkui_layouts_list", "mkui_layouts_get"} <= names
 
 
 class TestWebSocket:
@@ -622,7 +633,7 @@ class TestTaskLinks:
                 [ra] = await _refs(ws, a)
                 [rb] = await _refs(ws, b)
         assert (ra["kind"], ra["relation"], ra["href"], ra["label"]) == ("task", "blocks", b, "Blocked")
-        assert (rb["kind"], rb["relation"], rb["href"], rb["label"]) == ("task", "blocked_by", a, "Blocker")
+        assert (rb["kind"], rb["relation"], rb["href"], rb["label"]) == ("task", "blocked by", a, "Blocker")
         assert ra["ref_id"] != rb["ref_id"]
 
     async def test_link_validation_writes_nothing(self, server):
@@ -630,7 +641,7 @@ class TestTaskLinks:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Lonely", "tv1")
                 b = await _add(ws, "Other", "tv2")
-                r = await _add_ref(ws, a, "tv3", expect="error", kind="task", relation="relates", href=a)
+                r = await _add_ref(ws, a, "tv3", expect="error", kind="task", relation="relates to", href=a)
                 assert "itself" in r["message"]
                 r = await _add_ref(ws, a, "tv4", expect="error", kind="task", relation="eats", href=b)
                 assert "relation" in r["message"]
@@ -639,17 +650,57 @@ class TestTaskLinks:
                 await _add_ref(ws, a, "tv6", kind="task", relation="blocks", href=b)
                 r = await _add_ref(ws, a, "tv7", expect="error", kind="task", relation="blocks", href=b)
                 assert "already blocks" in r["message"]
-                await _add_ref(ws, a, "tv8", kind="task", relation="relates", href=b)  # a second relation is fine
+                await _add_ref(ws, a, "tv8", kind="task", relation="relates to", href=b)  # a second relation is fine
                 await asyncio.sleep(0.2)
                 assert len(await _refs(ws, a)) == 2
                 assert len(await _refs(ws, b)) == 2
+
+    async def test_no_link_within_a_tree(self, server):
+        """Splitting already relates a task to everything in its tree — its
+        ancestors, its descendants, and every descendant of an ancestor — so
+        a link may only join tasks from different trees."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                root = await _add(ws, "Tree root", "ta1")
+                await _split(ws, root, "Tree child", "ta2")
+                await _split(ws, root, "Tree uncle", "ta3")
+                await asyncio.sleep(0.2)
+                kids = {r["title"]: r["task_id"] for r in (await _snapshot(ws, "ta4")).values()
+                        if r["parent_task_id"] == root}
+                child, uncle = kids["Tree child"], kids["Tree uncle"]
+                await _split(ws, child, "Tree grandchild", "ta5")
+                await asyncio.sleep(0.2)
+                grandchild = next(r["task_id"] for r in (await _snapshot(ws, "ta6")).values()
+                                  if r["parent_task_id"] == child)
+                other = await _add(ws, "Other tree", "ta7")
+                cases = [(root, child, "descendant"), (child, root, "ancestor"),
+                         (root, grandchild, "descendant"), (grandchild, root, "ancestor"),
+                         (child, uncle, "same tree"), (uncle, grandchild, "same tree"),
+                         (grandchild, uncle, "same tree")]
+                for a, b, word in cases:
+                    for relation in WORDINGS:
+                        r = await _add_ref(ws, a, f"ta-{a}-{b}-{relation}", expect="error",
+                                           kind="task", relation=relation, href=b)
+                        assert word in r["message"], r
+                await _add_ref(ws, grandchild, "ta8", kind="task", relation="relates to", href=other)  # another tree: fine
+                await asyncio.sleep(0.2)
+                assert len(await _refs(ws, grandchild)) == 1
+                for t in (root, child, uncle):
+                    assert await _refs(ws, t) == []
+                # the Link dialog's picker leaves the whole tree out too
+                for t in (root, child, uncle, grandchild):
+                    got = {r["value"] for r in await _request(ws, "task_options", {"task_id": t})}
+                    assert other in got, t
+                    assert not ({root, child, uncle, grandchild} & got), t
+                got = {r["value"] for r in await _request(ws, "task_options", {"task_id": other})}
+                assert {root, child, uncle, grandchild} <= got
 
     async def test_unlink_removes_both_sides(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Unlink A", "tu1")
                 b = await _add(ws, "Unlink B", "tu2")
-                await _add_ref(ws, a, "tu3", kind="task", relation="relates", href=b)
+                await _add_ref(ws, a, "tu3", kind="task", relation="relates to", href=b)
                 await asyncio.sleep(0.2)
                 [rb] = await _refs(ws, b)
                 await _txn(ws, "delete_ref", {"ref_id": rb["ref_id"]}, "tu4")  # from the mirror side
@@ -662,17 +713,36 @@ class TestTaskLinks:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Old title", "tt1")
                 b = await _add(ws, "Watcher", "tt2")
-                await _add_ref(ws, b, "tt3", kind="task", relation="relates", href=a)
+                await _add_ref(ws, b, "tt3", kind="task", relation="relates to", href=a)
                 await asyncio.sleep(0.2)
                 await _txn(ws, "edit", {"task_id": a, "title": "New title", "notes": "", "importance": 3,
                                         "urgency": 3, "due": "", "updated_at": NOW}, "tt4")
                 [rb] = await _refs(ws, b)
-                r = await _txn(ws, "edit_ref", {"ref_id": rb["ref_id"], "label": "Mine", "updated_at": NOW},
-                               "tt5", expect="error")
+                # edit_ref on a link ignores a label: it follows the linked task
+                await _txn(ws, "edit_ref", {"ref_id": rb["ref_id"], "label": "Mine", "relation": "relates to",
+                                            "updated_at": NOW}, "tt5")
                 await asyncio.sleep(0.2)
                 [rb] = await _refs(ws, b)
         assert rb["label"] == "New title"
-        assert "edit that task" in r["message"]
+
+    async def test_edit_ref_changes_a_links_relation_on_both_sides(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Rel A", "tr1")
+                b = await _add(ws, "Rel B", "tr2")
+                await _add_ref(ws, a, "tr3", kind="task", relation="relates to", href=b)
+                await asyncio.sleep(0.2)
+                [ra] = await _refs(ws, a)
+                await _txn(ws, "edit_ref", {"ref_id": ra["ref_id"], "relation": "blocked by", "updated_at": NOW}, "tr4")
+                r = await _txn(ws, "edit_ref", {"ref_id": ra["ref_id"], "relation": "eats", "updated_at": NOW},
+                               "tr5", expect="error")
+                await asyncio.sleep(0.2)
+                [ra] = await _refs(ws, a)
+                [rb] = await _refs(ws, b)
+        assert (ra["relation"], ra["href"], ra["label"]) == ("blocked by", b, "Rel B")
+        assert (rb["relation"], rb["href"], rb["label"]) == ("blocks", a, "Rel A")
+        assert ra["updated_at"] == rb["updated_at"] == NOW
+        assert "relation" in r["message"]
 
     async def test_deleting_either_task_removes_the_link(self, server):
         async with aiohttp.ClientSession() as s:
@@ -681,7 +751,7 @@ class TestTaskLinks:
                 b = await _add(ws, "Stays", "td2")
                 c = await _add(ws, "Stays too", "td3")
                 await _add_ref(ws, a, "td4", kind="task", relation="blocks", href=b)
-                await _add_ref(ws, c, "td5", kind="task", relation="relates", href=a)
+                await _add_ref(ws, c, "td5", kind="task", relation="relates to", href=a)
                 await _add_ref(ws, b, "td6", kind="url", href="https://keep")
                 await asyncio.sleep(0.2)
                 await _txn(ws, "delete", {"task_id": a}, "td7")
@@ -700,10 +770,152 @@ class TestTaskLinks:
                 await asyncio.sleep(0.2)
                 rows = await _request(ws, "task_options", {"task_id": a})
                 got = {r["value"]: r["label"] for r in rows}
-                [task] = await _request(ws, "task_get", {"task_id": b})
         assert a not in got and c not in got
-        assert got[b] == f"{b}  Option other"
-        assert task["title"] == "Option other" and task["status"] == "open"
+        assert got[b] == f"{b}  Option other", "the picker labels a task by its title"
+
+
+class TestRelations:
+    async def test_seeded_on_first_start(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await ws.send_json({"service": "all_relations", "type": "subscribe", "protocol": "query",
+                                    "subid": "rs", "ref": "rs1"})
+                snap = await _recv_json(ws)
+                await ws.send_json({"service": "all_relations", "type": "unsubscribe", "subid": "rs"})
+                options = await _request(ws, "relation_options", {})
+        pairs = {(r["forward"], r["backward"]) for r in snap["rows"]}
+        assert {(r["forward"], r["backward"]) for r in SEED} <= pairs
+        assert all(r["relation_id"] > 0 for r in snap["rows"])
+        values = [o["value"] for o in options]
+        assert values == sorted(set(values)), "one entry per wording, a symmetric pair once"
+        assert set(WORDINGS) <= set(values)
+        assert all(o["label"] == o["value"] for o in options)
+
+    async def test_add_edit_delete_relation(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await _txn(ws, "add_relation", {"forward": " depends on ", "backward": "needed by"}, "ra1")
+                await _txn(ws, "add_relation", {"forward": "twins with"}, "ra2")  # symmetric
+                r = await _txn(ws, "add_relation", {"forward": "  "}, "ra3", expect="error")
+                assert "wording" in r["message"]
+                r = await _txn(ws, "add_relation", {"forward": "Needed By"}, "ra4", expect="error")
+                assert "already" in r["message"], "unique across both columns, case-insensitively"
+                r = await _txn(ws, "add_relation", {"forward": "x", "backward": "BLOCKS"}, "ra5", expect="error")
+                assert "already" in r["message"]
+                await asyncio.sleep(0.2)
+                rows = {r["forward"]: r for r in await self._relations(ws)}
+                assert rows["depends on"]["backward"] == "needed by"
+                assert rows["twins with"]["backward"] == "twins with"
+                twins = rows["twins with"]["relation_id"]
+                await _txn(ws, "edit_relation", {"relation_id": twins, "forward": "twinned with", "backward": "",
+                                                 "notes": "n", "updated_at": NOW}, "ra6")
+                r = await _txn(ws, "edit_relation", {"relation_id": twins, "forward": "blocks", "backward": "",
+                                                     "notes": "", "updated_at": NOW}, "ra7", expect="error")
+                assert "already" in r["message"]
+                await _txn(ws, "edit_relation", {"relation_id": twins, "forward": "twinned with", "backward": "",
+                                                 "notes": "same", "updated_at": NOW}, "ra8")  # own wording is fine
+                await asyncio.sleep(0.2)
+                rows = {r["forward"]: r for r in await self._relations(ws)}
+                assert "twins with" not in rows
+                assert (rows["twinned with"]["backward"], rows["twinned with"]["notes"]) == ("twinned with", "same")
+                await _txn(ws, "delete_relation", {"relation_id": twins}, "ra9")
+                await _txn(ws, "delete_relation", {"relation_id": rows["depends on"]["relation_id"]}, "ra10")
+                await asyncio.sleep(0.2)
+                rows = {r["forward"] for r in await self._relations(ws)}
+        assert not ({"twinned with", "depends on"} & rows)
+
+    async def test_rename_rewrites_links_and_delete_is_refused_in_use(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await _txn(ws, "add_relation", {"forward": "waits for", "backward": "awaited by"}, "rr1")
+                await asyncio.sleep(0.2)
+                rel = next(r for r in await self._relations(ws) if r["forward"] == "waits for")
+                a = await _add(ws, "Waiter", "rr2")
+                b = await _add(ws, "Awaited", "rr3")
+                c = await _add(ws, "Awaited too", "rr4")
+                await _add_ref(ws, a, "rr5", kind="task", relation="waits for", href=b)
+                await _add_ref(ws, c, "rr6", kind="task", relation="awaited by", href=a)
+                await asyncio.sleep(0.2)
+                r = await _txn(ws, "delete_relation", {"relation_id": rel["relation_id"]}, "rr7", expect="error")
+                assert "2 links use it" in r["message"]
+                await _txn(ws, "edit_relation", {"relation_id": rel["relation_id"], "forward": "pends on",
+                                                 "backward": "pended by", "notes": "", "updated_at": NOW}, "rr8")
+                await asyncio.sleep(0.2)
+                ra = {r["href"]: r["relation"] for r in await _refs(ws, a)}
+                [rb] = await _refs(ws, b)
+                [rc] = await _refs(ws, c)
+                assert ra == {b: "pends on", c: "pends on"}
+                assert rb["relation"] == "pended by" and rc["relation"] == "pended by"
+                # fold to symmetric: both wordings become the forward one
+                await _txn(ws, "edit_relation", {"relation_id": rel["relation_id"], "forward": "pends with",
+                                                 "backward": "", "notes": "", "updated_at": NOW}, "rr9")
+                await asyncio.sleep(0.2)
+                assert {r["relation"] for r in await _refs(ws, a)} == {"pends with"}
+                [rb] = await _refs(ws, b)
+                assert rb["relation"] == "pends with"
+                # delete_ref still finds the mirror after the rename
+                await _txn(ws, "delete_ref", {"ref_id": rb["ref_id"]}, "rr10")
+                [rc] = await _refs(ws, c)
+                await _txn(ws, "delete_ref", {"ref_id": rc["ref_id"]}, "rr11")
+                await asyncio.sleep(0.2)
+                assert await _refs(ws, a) == [] and await _refs(ws, b) == [] and await _refs(ws, c) == []
+                await _txn(ws, "delete_relation", {"relation_id": rel["relation_id"]}, "rr12")
+                await asyncio.sleep(0.2)
+                assert "pends with" not in {r["forward"] for r in await self._relations(ws)}
+
+    async def test_swapping_a_relations_two_wordings_flips_its_links(self, server):
+        """forward and backward trade places: every link must end up on the
+        other side, not back where it started. The rewrite reads the ref_ids
+        of both wordings before it writes either, so the two passes cannot
+        chase each other."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await _txn(ws, "add_relation", {"forward": "feeds", "backward": "fed by"}, "rx1")
+                await asyncio.sleep(0.2)
+                rel = next(r for r in await self._relations(ws) if r["forward"] == "feeds")
+                a = await _add(ws, "Feeder", "rx2")
+                b = await _add(ws, "Fed", "rx3")
+                await _add_ref(ws, a, "rx4", kind="task", relation="feeds", href=b)
+                await asyncio.sleep(0.2)
+                await _txn(ws, "edit_relation", {"relation_id": rel["relation_id"], "forward": "fed by",
+                                                 "backward": "feeds", "notes": "", "updated_at": NOW}, "rx5")
+                await asyncio.sleep(0.2)
+                [ra] = await _refs(ws, a)
+                [rb] = await _refs(ws, b)
+        assert ra["relation"] == "fed by", "the row that said 'feeds' now says 'fed by'"
+        assert rb["relation"] == "feeds"
+
+    async def test_a_symmetric_link_cannot_be_added_from_the_other_side(self, server):
+        """Both halves of a symmetric link carry the same wording, so adding it
+        the other way round is the mirror row, not a second link."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Sym A", "ry1")
+                b = await _add(ws, "Sym B", "ry2")
+                await _add_ref(ws, a, "ry3", kind="task", relation="relates to", href=b)
+                await asyncio.sleep(0.2)
+                r = await _add_ref(ws, b, "ry4", expect="error", kind="task", relation="relates to", href=a)
+                assert "already" in r["message"]
+                await asyncio.sleep(0.2)
+                assert len(await _refs(ws, a)) == 1 and len(await _refs(ws, b)) == 1
+
+    async def test_link_needs_a_known_wording(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Word A", "rw1")
+                b = await _add(ws, "Word B", "rw2")
+                for bad in ("", "eats", "Blocks"):  # wordings are exact
+                    r = await _add_ref(ws, a, f"rw-{bad}", expect="error", kind="task", relation=bad, href=b)
+                    assert "relation" in r["message"], bad
+                assert await _refs(ws, a) == []
+
+    @staticmethod
+    async def _relations(ws):
+        await ws.send_json({"service": "all_relations", "type": "subscribe", "protocol": "query",
+                            "subid": "rl", "ref": "rl"})
+        snap = await _recv_json(ws)
+        await ws.send_json({"service": "all_relations", "type": "unsubscribe", "subid": "rl"})
+        return snap["rows"]
 
 
 class TestFiles:

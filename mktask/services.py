@@ -44,8 +44,7 @@ COUNTER_NAME = "task"
 _MIN_DIGITS = 8
 
 REF_KINDS = ("url", "text", "file", "task")
-# relation -> the relation the mirror row carries
-RELATIONS = {"blocks": "blocked_by", "blocked_by": "blocks", "relates": "relates"}
+SEED_RELATIONS = Path(__file__).with_name("relations.json")  # what a new database starts with
 FILES_ROUTE = "/files/"
 _LABEL_MAX = 80
 
@@ -81,6 +80,7 @@ class TaskTransactions(TransactionService):
 
     CASCADE_OPS = ("complete", "reopen", "delete")
     REF_OPS = ("add_ref", "edit_ref", "delete_ref")
+    RELATION_OPS = ("add_relation", "edit_relation", "delete_relation")
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -125,7 +125,7 @@ class TaskTransactions(TransactionService):
             data = {**data, "task_id": task_id, "last": number}
             return await super().on_message(ws, {**msg, "data": data})
 
-        if op in self.CASCADE_OPS or op in self.REF_OPS or op == "edit":
+        if op in self.CASCADE_OPS or op in self.REF_OPS or op in self.RELATION_OPS or op == "edit":
             return await self._guarded(ws, msg, op, data)
 
         return await super().on_message(ws, msg)
@@ -224,14 +224,23 @@ class TaskTransactions(TransactionService):
             raise ValueError(f"Cannot add a reference: no task {task_id!r}")
 
         if kind == "task":
-            relation = data.get("relation") or ""
-            if relation not in RELATIONS:
+            relation = str(data.get("relation") or "").strip()
+            inverse = await self._inverse(relation)
+            if inverse is None:
                 raise ValueError(f"Unknown relation {relation!r}")
             if href == task_id:
                 raise ValueError("A task cannot be linked to itself")
             other = await self._task(href)
             if other is None:
                 raise ValueError(f"Cannot link: no task {href!r}")
+            mine = await self._ancestors_and_self(task_id, status=None)
+            theirs = await self._ancestors_and_self(href, status=None)
+            if href in mine:
+                raise ValueError(f"Cannot link: {href} is an ancestor of {task_id} (it was split from it)")
+            if task_id in theirs:
+                raise ValueError(f"Cannot link: {href} is a descendant of {task_id} (it was split from it)")
+            if mine[-1] == theirs[-1]:
+                raise ValueError(f"Cannot link: {task_id} and {href} are in the same tree (split from {mine[-1]})")
             dup = await self.db.read(
                 "SELECT 1 FROM task_refs WHERE task_id = ? AND kind = 'task' AND href = ? AND relation = ?",
                 (task_id, href, relation),
@@ -241,7 +250,7 @@ class TaskTransactions(TransactionService):
             rows = [
                 {**data, "kind": kind, "relation": relation, "href": href,
                  "label": other["title"], "body": "", "mime": ""},
-                {**data, "task_id": href, "kind": kind, "relation": RELATIONS[relation],
+                {**data, "task_id": href, "kind": kind, "relation": inverse,
                  "href": task_id, "label": task["title"], "body": "", "mime": ""},
             ]
             return await self._submit("add_ref", rows, data, ref)
@@ -261,7 +270,17 @@ class TaskTransactions(TransactionService):
         if row is None:
             raise ValueError(f"No reference {data['ref_id']!r}")
         if row["kind"] == "task":
-            raise ValueError("A task link's label follows the linked task; edit that task instead")
+            # Only the relation is editable: the label follows the linked
+            # task and a new target is a new link. Both halves change together.
+            relation = str(data.get("relation") or "").strip()
+            inverse = await self._inverse(relation)
+            if inverse is None:
+                raise ValueError(f"Unknown relation {relation!r}")
+            mirror = await self._mirror(row)
+            rows = [{**data, **row, "relation": relation, "updated_at": data.get("updated_at", row["updated_at"])}]
+            if mirror:
+                rows.append({**mirror, "relation": inverse, "updated_at": data.get("updated_at", mirror["updated_at"])})
+            return await self._submit("edit_ref", rows, data, ref)
         href = str(data.get("href") or "").strip()
         body = str(data.get("body") or "")
         if row["kind"] == "file":
@@ -271,21 +290,106 @@ class TaskTransactions(TransactionService):
         elif not href:
             raise ValueError("A URL reference needs a URL")
         label = str(data.get("label") or "").strip() or default_label(row["kind"], href, body)
-        return await self._submit("edit_ref", [{**data, "href": href, "body": body, "label": label}], data, ref)
+        return await self._submit("edit_ref", [{**data, "href": href, "body": body, "label": label, "relation": ""}], data, ref)
 
     async def _op_delete_ref(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
         row = await self._ref(data["ref_id"])
         rows = [{"ref_id": data["ref_id"]}]
         if row is not None and row["kind"] == "task":
-            mirrors = await self.db.read(
-                "SELECT ref_id FROM task_refs WHERE task_id = ? AND kind = 'task' AND href = ? AND relation = ?",
-                (row["href"], row["task_id"], RELATIONS.get(row["relation"], "")),
-            )
-            rows.extend({"ref_id": m["ref_id"]} for m in mirrors)
+            mirror = await self._mirror(row)
+            if mirror:
+                rows.append({"ref_id": mirror["ref_id"]})
         result = await self._submit_each("delete_ref", rows, ref)
         if row is not None and row["kind"] == "file":
             await self._unlink_orphans([row["href"]])
         return result
+
+    # ── Relations ─────────────────────────────────────────────────────
+
+    async def _relation_data(self, data: dict[str, Any], exclude_id: Any = None) -> dict[str, Any]:
+        """Trimmed wordings with backward defaulting to forward, checked unique."""
+        forward = str(data.get("forward") or "").strip()
+        backward = str(data.get("backward") or "").strip() or forward
+        if not forward:
+            raise ValueError("A relation needs a wording")
+        rows = await self.db.read("SELECT relation_id, forward, backward FROM relations")
+        taken = {}
+        for r in rows:
+            if exclude_id is not None and r["relation_id"] == exclude_id:
+                continue
+            taken[r["forward"].lower()] = r["forward"]
+            taken[r["backward"].lower()] = r["backward"]
+        for wording in {forward, backward}:
+            if wording.lower() in taken:
+                raise ValueError(f"{wording!r} is already a relation wording ({taken[wording.lower()]!r})")
+        return {**data, "forward": forward, "backward": backward, "notes": str(data.get("notes") or "")}
+
+    async def _op_add_relation(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        return await self._submit("add_relation", [await self._relation_data(data)], data, ref)
+
+    async def _op_edit_relation(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        """Rename: every link carrying an old wording takes the new one, same transaction."""
+        old = await self._relation(data["relation_id"])
+        if old is None:
+            raise ValueError(f"No relation {data['relation_id']!r}")
+        new = await self._relation_data(data, exclude_id=old["relation_id"])
+        compiled = self._resolve_ops({"op": "edit_relation"})
+        ops = list(compiled)
+        params = [_extract_params(step, new) for step in compiled]
+        rewrite = [(old["forward"], new["forward"]), (old["backward"], new["backward"])]
+        for was, now in rewrite:
+            if was == now:
+                continue
+            links = await self.db.read(
+                "SELECT ref_id FROM task_refs WHERE kind = 'task' AND relation = ?", (was,)
+            )
+            r_ops, r_params = self._steps("reword_ref", [{"ref_id": r["ref_id"], "relation": now} for r in links])
+            ops.extend(r_ops)
+            params.extend(r_params)
+        return await self.writer.submit(tuple(ops), tuple(params), data, ref=ref)
+
+    async def _op_delete_relation(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        row = await self._relation(data["relation_id"])
+        if row is not None:
+            used = await self.db.read(
+                "SELECT COUNT(*) AS n FROM task_refs WHERE kind = 'task' AND relation IN (?, ?)",
+                (row["forward"], row["backward"]),
+            )
+            n = int(used[0]["n"])
+            if n:
+                links = n // 2  # a link is two rows, whatever the wordings
+                raise ValueError(
+                    f"Cannot delete {row['forward']!r}: {links} link{'s' if links != 1 else ''} use it. "
+                    "Remove those links first, or rename the relation instead."
+                )
+        return await self._submit_each("delete_relation", [{"relation_id": data["relation_id"]}], ref)
+
+    async def _relation(self, relation_id: Any) -> dict[str, Any] | None:
+        rows = await self.db.read("SELECT * FROM relations WHERE relation_id = ?", (relation_id,))
+        return dict(rows[0]) if rows else None
+
+    async def _inverse(self, wording: str) -> str | None:
+        """The other wording of the pair a wording belongs to; None if unknown."""
+        if not wording:
+            return None
+        rows = await self.db.read(
+            "SELECT forward, backward FROM relations WHERE forward = ? OR backward = ?", (wording, wording)
+        )
+        if not rows:
+            return None
+        r = rows[0]
+        return r["backward"] if r["forward"] == wording else r["forward"]
+
+    async def _mirror(self, row: dict[str, Any]) -> dict[str, Any] | None:
+        """The other half of a task link: on the linked task, pointing back, with the inverse wording."""
+        inverse = await self._inverse(row["relation"])
+        if inverse is None:
+            return None
+        rows = await self.db.read(
+            "SELECT * FROM task_refs WHERE task_id = ? AND kind = 'task' AND href = ? AND relation = ?",
+            (row["href"], row["task_id"], inverse),
+        )
+        return dict(rows[0]) if rows else None
 
     async def _unlink_orphans(self, hrefs: Any) -> None:
         """Remove files under the files directory that no reference names any more."""

@@ -10,8 +10,7 @@
       "color": "#000"
     },
     "selected_task": null,
-    "selected_ref": null,
-    "linked_task": null
+    "selected_ref": null
   },
   "menubar": [
     {
@@ -33,9 +32,9 @@
           "args": "references"
         },
         {
-          "label": "Linked Task",
+          "label": "Relations",
           "action": "pane.show",
-          "args": "linked-task"
+          "args": "relations"
         },
         {
           "sep": true
@@ -601,9 +600,9 @@
           "action": {
             "type": "dialog",
             "dialog": {
-              "title": "Add Reference to Task ID ${row.task_id}",
+              "title": "Add ${IF(kind == 'task', 'task link', IF(kind == 'url', 'URL', 'text'))} to Task ID ${row.task_id}",
               "modal": true,
-              "width": 440,
+              "width": 460,
               "fields": [
                 {
                   "name": "task_id",
@@ -628,11 +627,15 @@
                     {
                       "value": "text",
                       "label": "Text snippet"
+                    },
+                    {
+                      "value": "task",
+                      "label": "Link to another task"
                     }
                   ]
                 },
                 {
-                  "name": "href",
+                  "name": "_url",
                   "label": "URL",
                   "type": "text",
                   "required": true,
@@ -648,74 +651,23 @@
                   "showWhen": "kind == 'text'"
                 },
                 {
-                  "name": "label",
-                  "label": "Label (optional)",
-                  "type": "text",
-                  "value": "",
-                  "placeholder": "Defaults to the URL or the first line"
-                }
-              ],
-              "submit": {
-                "label": "Add",
-                "service": "tasks",
-                "op": "add_ref"
-              }
-            }
-          }
-        },
-        {
-          "label": "Link",
-          "unit": "row",
-          "enable": {
-            "connected": true
-          },
-          "action": {
-            "type": "dialog",
-            "dialog": {
-              "title": "Link Task ID ${row.task_id}",
-              "modal": true,
-              "width": 440,
-              "fields": [
-                {
-                  "name": "task_id",
-                  "type": "hidden",
-                  "value": "${row.task_id}"
-                },
-                {
-                  "name": "kind",
-                  "type": "hidden",
-                  "value": "task"
-                },
-                {
-                  "label": "This task",
-                  "type": "readonly",
-                  "value": "${row.title}"
-                },
-                {
                   "name": "relation",
-                  "label": "Relation",
-                  "type": "select",
-                  "value": "blocks",
-                  "options": [
-                    {
-                      "value": "blocks",
-                      "label": "blocks"
-                    },
-                    {
-                      "value": "blocked_by",
-                      "label": "is blocked by"
-                    },
-                    {
-                      "value": "relates",
-                      "label": "relates to"
-                    }
-                  ]
-                },
-                {
-                  "name": "href",
-                  "label": "Task",
+                  "label": "This task …",
                   "type": "select",
                   "required": true,
+                  "showWhen": "kind == 'task'",
+                  "optionsFrom": {
+                    "service": "relation_options",
+                    "value": "value",
+                    "label": "label"
+                  }
+                },
+                {
+                  "name": "_task",
+                  "label": "… that task",
+                  "type": "select",
+                  "required": true,
+                  "showWhen": "kind == 'task'",
                   "optionsFrom": {
                     "service": "task_options",
                     "params": {
@@ -724,10 +676,26 @@
                     "value": "value",
                     "label": "label"
                   }
+                },
+                {
+                  "name": "href",
+                  "type": "hidden",
+                  "compute": "IF(kind == 'task', _task, IF(kind == 'url', _url, ''))"
+                },
+                {
+                  "name": "label",
+                  "label": "Label",
+                  "type": "text",
+                  "showWhen": "kind != 'task'",
+                  "compute": "IF(kind == 'url', _url, FIRST(FILTER(SPLIT(body ?? '', '\\n'), l -> TRIM(l) != '')) ?? '')",
+                  "placeholder": "What to show for it"
                 }
               ],
+              "footer": {
+                "note": "${IF(kind == 'task', 'The link shows on both tasks, worded from each side. Relations are edited under Tasks › Relations.', 'Files: drop, paste, or pick them in the Detail pane.')}"
+              },
               "submit": {
-                "label": "Link",
+                "label": "Add",
                 "service": "tasks",
                 "op": "add_ref"
               }
@@ -836,7 +804,8 @@
         },
         {
           "type": "task-refs",
-          "class": "task-detail-refs"
+          "class": "task-detail-refs",
+          "reveal": true
         }
       ]
     },
@@ -860,8 +829,7 @@
         "created_at": "Added"
       },
       "display": {
-        "label": "${IF(kind == 'task', CONCAT(href, '  ', label), IF(href == '', label, LINK(label, href)))}",
-        "relation": "${IF(relation == 'blocks', 'blocks', IF(relation == 'blocked_by', 'blocked by', IF(relation == 'relates', 'relates to', '')))}"
+        "label": "${IF(kind == 'task', CONCAT(href, '  ', label), IF(href == '', label, LINK(label, href)))}"
       },
       "types": {
         "created_at": {
@@ -895,15 +863,14 @@
           "label": "Edit",
           "unit": "row",
           "enable": {
-            "connected": true,
-            "when": "row != NULL && row.kind != 'task'"
+            "connected": true
           },
           "action": {
             "type": "dialog",
             "dialog": {
-              "title": "Edit Reference",
+              "title": "Edit ${IF(row.kind == 'task', 'task link', row.kind)} reference",
               "modal": true,
-              "width": 440,
+              "width": 460,
               "fields": [
                 {
                   "name": "ref_id",
@@ -921,10 +888,30 @@
                   "value": "${row.task_id}"
                 },
                 {
+                  "label": "Linked task",
+                  "type": "readonly",
+                  "value": "${row.href}  ${row.label}",
+                  "showWhen": "row.kind == 'task'"
+                },
+                {
+                  "name": "relation",
+                  "label": "This task …",
+                  "type": "select",
+                  "required": true,
+                  "value": "${row.relation}",
+                  "showWhen": "row.kind == 'task'",
+                  "optionsFrom": {
+                    "service": "relation_options",
+                    "value": "value",
+                    "label": "label"
+                  }
+                },
+                {
                   "name": "label",
                   "label": "Label",
                   "type": "text",
-                  "value": "${row.label}"
+                  "value": "${row.label}",
+                  "showWhen": "row.kind != 'task'"
                 },
                 {
                   "name": "href",
@@ -998,28 +985,163 @@
         "chips": false
       }
     },
-    "linked-task": {
-      "title": "Linked Task",
-      "widgets": [
+    "relations": {
+      "title": "Relations",
+      "type": "mkio-table",
+      "service": "all_relations",
+      "protocol": "query",
+      "columns": [
+        "forward",
+        "backward",
+        "notes"
+      ],
+      "labels": {
+        "forward": "This task …",
+        "backward": "… that task",
+        "notes": "Notes"
+      },
+      "sort": [
+        "forward"
+      ],
+      "buttons": [
         {
-          "type": "text",
-          "text": "${IF(state.linked_task == NULL, 'Follow a task link from the Detail pane to open a task here.', FORMAT('{}  {}', state.linked_task.task_id, state.linked_task.title))}",
-          "class": "task-detail-title"
+          "label": "New",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "New Relation",
+              "modal": true,
+              "width": 440,
+              "fields": [
+                {
+                  "name": "forward",
+                  "label": "This task … that task",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "blocks",
+                  "value": ""
+                },
+                {
+                  "name": "backward",
+                  "label": "That task … this task",
+                  "type": "text",
+                  "placeholder": "${forward} (leave blank if it reads the same both ways)"
+                },
+                {
+                  "name": "notes",
+                  "label": "Notes",
+                  "type": "textarea",
+                  "value": ""
+                }
+              ],
+              "footer": {
+                "note": "A link reads \"A ${forward ?? '…'} B\" on one task and \"B ${IF(TRIM(backward ?? '') == '', forward ?? '…', backward)} A\" on the other."
+              },
+              "submit": {
+                "label": "Create",
+                "service": "tasks",
+                "op": "add_relation"
+              }
+            }
+          }
         },
         {
-          "type": "text",
-          "text": "${IF(state.linked_task == NULL, '', CONCAT(TITLE(state.linked_task.status), IF(state.linked_task.parent_task_id == '', '', CONCAT(' · Split from Task ID ', state.linked_task.parent_task_id))))}",
-          "class": "task-detail-parent"
+          "label": "Edit",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Edit Relation",
+              "modal": true,
+              "width": 440,
+              "fields": [
+                {
+                  "name": "relation_id",
+                  "type": "hidden",
+                  "value": "${row.relation_id}"
+                },
+                {
+                  "name": "updated_at",
+                  "type": "hidden",
+                  "value": "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+                },
+                {
+                  "name": "forward",
+                  "label": "This task … that task",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "blocks",
+                  "value": "${row.forward}"
+                },
+                {
+                  "name": "backward",
+                  "label": "That task … this task",
+                  "type": "text",
+                  "placeholder": "${forward} (leave blank if it reads the same both ways)",
+                  "value": "${IF(row.forward == row.backward, '', row.backward)}"
+                },
+                {
+                  "name": "notes",
+                  "label": "Notes",
+                  "type": "textarea",
+                  "value": "${row.notes}"
+                }
+              ],
+              "footer": {
+                "note": "Renaming rewrites every link that uses this relation."
+              },
+              "submit": {
+                "label": "Save",
+                "service": "tasks",
+                "op": "edit_relation"
+              }
+            }
+          }
         },
         {
-          "type": "text",
-          "text": "${IF(state.linked_task == NULL, '', state.linked_task.notes)}",
-          "class": "task-detail-notes"
-        },
-        {
-          "type": "task-refs",
-          "mode": "linked",
-          "class": "task-detail-refs"
+          "label": "Delete",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "style": [
+            {
+              "when": "enabled",
+              "background": "#c62828",
+              "color": "#fff"
+            }
+          ],
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Delete Relation",
+              "modal": true,
+              "width": 380,
+              "fields": [
+                {
+                  "name": "relation_id",
+                  "type": "hidden",
+                  "value": "${row.relation_id}"
+                },
+                {
+                  "label": "Delete this relation? Refused while any link uses it.",
+                  "type": "readonly",
+                  "value": "${row.forward} / ${row.backward}"
+                }
+              ],
+              "submit": {
+                "label": "Delete",
+                "service": "tasks",
+                "op": "delete_relation"
+              }
+            }
+          }
         }
       ]
     }
