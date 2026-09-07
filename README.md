@@ -33,14 +33,23 @@ button adds any of them: pick the kind and the form follows, with the
 label suggested from the URL or the first line of the text. Files are
 added from the Detail pane instead: select a task and drop, paste, or pick
 a file there; an image pastes straight from the clipboard, a pasted URL
-becomes a URL reference, pasted text a snippet. The References pane follows
-the selected tasks (mkui table linking; clear the selection to see every
-reference), with URLs and files as links; selecting a reference previews
-it in the Detail pane, an image inline. A task link shows on both tasks,
-worded from each side, and *Go to* selects the linked task in the blotter,
-so the Detail and References panes follow it (a linked task the current
-filter hides is revealed first). Only tasks from different trees can be
-linked; tasks that share a root are already related by splitting.
+becomes a URL reference, pasted text a snippet. The Detail pane lists every
+reference of the selected task the moment it is selected, **and every
+reference of the tasks split from it** — a section per relation ("Blocks",
+"Blocked by"), then the images, files, URLs, and snippets, each section
+counted, and a reference a child owns tagged with its Task ID. **Images show
+as a grid of thumbnails**; clicking one opens it full size under the grid, and
+clicking a snippet or a URL opens it where it stands. The subtree comes from
+the tasks themselves, not from what the blotter is showing, so a completed
+child's references stay with its ancestor. The References pane follows the
+selected tasks (mkui table linking; clear the selection to see every
+reference), with URLs and files as links; selecting one there opens and marks
+the same line in the Detail pane, and a reference the Detail pane does not
+list leaves it alone. A task link shows on both tasks, worded from each side,
+and *Go to* selects the linked task in the blotter, so the Detail and
+References panes follow it (a linked task the current filter hides is revealed
+first). Only tasks from different trees can be linked; tasks that share a root
+are already related by splitting.
 
 **Relations are yours to define** under Tasks › Relations: each is a pair
 of wordings, one from this task to that one ("blocks") and one back
@@ -97,8 +106,9 @@ formats. The one piece of code is `mktask/services.py`, which the `tasks`
 service points at: it assigns Task IDs, runs the complete, reopen, and
 delete cascades, and manages references and relations (task links are
 written as a mirrored pair, labels follow the linked task's title, a
-renamed relation rewrites its links, orphaned files are removed). `static/refs.js` is the one custom widget: the drop box, the
-preview, and *Go to*.
+renamed relation rewrites its links, orphaned files are removed).
+`static/refs.js` is the one custom widget: the drop box, the reference list of
+the selected task and its descendants (its own live queries), and *Go to*.
 
 ## Upgrading
 
@@ -109,7 +119,9 @@ only adds the `task_refs` table, which `auto_migrate` creates in an existing
 database, so a 0.2.0 database carries over as is. 0.3.1 changes no schema.
 0.4.0 adds the `relations` table (created and seeded on first start) and
 stores a link's relation as its wording ("blocked by") rather than a key
-(`blocked_by`): links made before 0.4.0 must be removed and re-added.
+(`blocked_by`): links made before 0.4.0 must be removed and re-added. 0.5.0
+changes no schema — the Detail pane's new reference list reads the tables
+0.4.0 already had.
 
 ## Development
 

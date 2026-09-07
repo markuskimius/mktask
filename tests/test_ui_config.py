@@ -263,6 +263,47 @@ def test_task_refs_widget_state_and_services(app_config, server_config):
     assert len(widgets) == 1 and "mode" not in widgets[0], "one widget, in the Detail pane"
 
 
+def test_detail_pane_shows_the_selected_task_and_its_descendants(server_config):
+    """The Detail pane's references come from the selected task and every task
+    split from it, not from the References pane's cursor: the widget holds its
+    own live queries (mkio-table is not the only thing allowed to subscribe) —
+    `all_tasks` for the parent/child edges, `task_refs` filtered to the
+    subtree, server-side either way — and `state.selected_ref` only marks a
+    line the list already shows."""
+    js = (STATIC / "refs.js").read_text()
+    assert 'const REFS_SERVICE = "task_refs"' in js
+    assert 'const TASKS_SERVICE = "all_tasks"' in js
+    for service in ("REFS_SERVICE", "TASKS_SERVICE"):
+        assert f'client.subscribe({service}, "query"' in js, f"{service} is subscribed live"
+    refs, tasks = server_config["services"]["task_refs"], server_config["services"]["all_tasks"]
+    assert refs["protocol"] == tasks["protocol"] == "query"
+    assert "task_id" in refs["filterable"], "the widget filters its references on task_id"
+    for column in ("task_id", "parent_task_id", "title"):
+        assert f'"{column}"' in js, f"the subtree is built from {column}"
+    # one task, or the whole subtree, filtered on the server either way
+    assert "`task_id == ${quote(ids[0])}`" in js
+    assert "CONTAINS([${ids.map(quote).join(\", \")}], task_id)" in js
+    assert "refs.has(selectedRefId)" in js, "a reference this pane does not list marks nothing"
+    assert "client.unsubscribe(subid)" in js, "one reference subscription at a time"
+
+
+def test_images_preview_as_a_grid_of_thumbnails(server_config):
+    """An image reference shows as a thumbnail, not as a file name: images get
+    their own section, told from other files by the stored mime, and the
+    thumbnail is the file itself (mktask keeps no derived images)."""
+    js = (STATIC / "refs.js").read_text()
+    css = (STATIC / "mktask.css").read_text()
+    assert '["image", "Images"]' in js and '["file", "Files"]' in js, "images sit apart from files"
+    assert "mime" in server_config["tables"]["task_refs"]["columns"], "the section comes from the mime"
+    assert 'isImage = (ref) => ref.kind === "file"' in js
+    assert "img.src = ref.href" in js, "the thumbnail is the stored file, scaled by CSS"
+    assert 'img.loading = "lazy"' in js
+    for cls in ("task-refs-grid", "task-refs-tile", "task-refs-thumb",
+                "task-refs-tile-marked", "task-refs-tile-owner"):
+        assert f".{cls}" in css, f"class {cls} has no CSS rule"
+        assert cls in js, f"class {cls} is not used"
+
+
 def test_go_to_selects_the_linked_task(app_config):
     """mkui >= 0.2.23: `table.select` on the Tasks pane publishes the row as a
     click does, so the Detail and References panes follow. No viewer pane."""

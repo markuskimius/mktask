@@ -622,6 +622,95 @@ class TestReferences:
         assert snap["rows"][0]["kind"] == "text"
 
 
+class TestSubtreeReferences:
+    """What the Detail pane's own queries need from the server: a filter that
+    names a whole subtree, and the parent/child fields the subtree is computed
+    from. The widget lives in the browser; these contracts are tested here.
+    """
+
+    async def _tree(self, ws, tag):
+        root = await _add(ws, f"{tag}-root", f"{tag}1")
+        await _split(ws, root, f"{tag}-child", f"{tag}2")
+        await asyncio.sleep(0.2)
+        child = (await _snapshot(ws, f"{tag}-s1"))[f"{tag}-child"]["task_id"]
+        await _split(ws, child, f"{tag}-grandchild", f"{tag}3")
+        await asyncio.sleep(0.2)
+        grandchild = (await _snapshot(ws, f"{tag}-s2"))[f"{tag}-grandchild"]["task_id"]
+        return root, child, grandchild
+
+    @staticmethod
+    async def _txn_updates(ws, op, data, ref):
+        """A transaction on a socket that also holds a subscription: the live
+        updates land before the result."""
+        await ws.send_json({"service": "tasks", "type": "transaction", "op": op,
+                            "data": data, "ref": ref})
+        updates = []
+        while True:
+            msg = await _recv_json(ws)
+            if msg["type"] == "result":
+                return updates
+            assert msg["type"] == "update", msg
+            updates.append(msg)
+
+    async def test_a_subtree_filter_names_every_task_in_it(self, server):
+        """`CONTAINS([...], task_id)` is what the Detail pane subscribes with
+        once a task has children: `filterable` gates whether a filter is
+        honoured, not which expression may name the column."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                root, child, grandchild = await self._tree(ws, "SR")
+                outside = await _add(ws, "SR-outside", "SR4")
+                await _add_ref(ws, root, "SR5", kind="url", href="https://root")
+                await _add_ref(ws, grandchild, "SR6", kind="text", body="grandchild")
+                await _add_ref(ws, outside, "SR7", kind="url", href="https://outside")
+                await asyncio.sleep(0.2)
+                outside_ref = (await _refs(ws, outside))[0]["ref_id"]
+
+                ids = ", ".join(f"'{t}'" for t in (root, child, grandchild))
+                await ws.send_json({"service": "task_refs", "type": "subscribe", "protocol": "query",
+                                    "subid": "sr", "ref": "SR8",
+                                    "filter": f"CONTAINS([{ids}], task_id)"})
+                snap = await _recv_json(ws)
+
+                # A reference added anywhere in the subtree arrives live...
+                added = await self._txn_updates(
+                    ws, "add_ref", {"task_id": child, "kind": "url", "href": "https://child"}, "SR9")
+                assert [(u["op"], u["row"]["task_id"]) for u in added] == [("insert", child)]
+                ref_id = added[0]["row"]["ref_id"]
+
+                # ...and its delete does too, announced with the request's data
+                # (a ref_id, no task_id — mkio replays what it sent, so a
+                # filtered subscription still hears the row leave).
+                removed = await self._txn_updates(ws, "delete_ref", {"ref_id": ref_id}, "SR10")
+                assert [(u["op"], u["row"]["ref_id"]) for u in removed] == [("delete", ref_id)]
+
+                # A reference outside the subtree is silent in both directions.
+                assert await self._txn_updates(
+                    ws, "add_ref", {"task_id": outside, "kind": "text", "body": "quiet"}, "SR11") == []
+                assert await self._txn_updates(ws, "delete_ref", {"ref_id": outside_ref}, "SR12") == []
+
+                await ws.send_json({"service": "task_refs", "type": "unsubscribe", "subid": "sr"})
+        assert sorted(r["task_id"] for r in snap["rows"]) == sorted([root, grandchild])
+
+    async def test_all_tasks_projects_the_fields_the_subtree_needs(self, server):
+        """The widget subscribes to `all_tasks` with `fields`: three columns
+        are all a tree needs, and the rows come back with exactly those."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                root, child, _ = await self._tree(ws, "SF")
+                await ws.send_json({"service": "all_tasks", "type": "subscribe", "protocol": "query",
+                                    "subid": "sf", "ref": "SF4",
+                                    "fields": ["task_id", "parent_task_id", "title"]})
+                snap = await _recv_json(ws)
+                await ws.send_json({"service": "all_tasks", "type": "unsubscribe", "subid": "sf"})
+        rows = {r["title"]: r for r in snap["rows"]}
+        assert rows["SF-child"]["parent_task_id"] == root
+        assert rows["SF-grandchild"]["parent_task_id"] == child
+        assert rows["SF-root"]["parent_task_id"] == ""
+        for row in snap["rows"]:
+            assert {k for k in row if not k.startswith("_mkio_")} == {"task_id", "parent_task_id", "title"}
+
+
 class TestTaskLinks:
     async def test_link_writes_both_sides(self, server):
         async with aiohttp.ClientSession() as s:

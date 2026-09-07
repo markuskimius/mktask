@@ -55,10 +55,39 @@
   color: #f44747;
 }
 
-.task-refs-preview {
+/* The selected task's references: a section per relation, then per kind. */
+.task-refs-list {
   margin-top: 0.5em;
 }
 
+.task-refs-empty {
+  color: var(--mkui-fg-mute, #858585);
+  font-size: 0.9em;
+}
+
+.task-refs-group {
+  margin: 0.8em 0 0.2em;
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mkui-fg-mute, #858585);
+  border-bottom: 1px solid var(--mkui-border, #555);
+}
+
+.task-refs-group:first-child {
+  margin-top: 0;
+}
+
+.task-refs-item {
+  padding: 0.15em 0.25em;
+  border-radius: 3px;
+}
+
+/* The line state.selected_ref points at, when the reference is this task's. */
+.task-refs-item-marked {
+  background: var(--mkui-bg-alt, rgba(255, 255, 255, 0.08));
+  box-shadow: inset 3px 0 0 var(--mkui-accent, #4ec9b0);
+}
 
 .task-refs-line {
   display: flex;
@@ -67,22 +96,18 @@
   gap: 0.5em;
 }
 
-.task-refs-kind {
-  font-size: 0.75em;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--mkui-fg-mute, #858585);
-  border: 1px solid var(--mkui-border, #555);
-  border-radius: 3px;
-  padding: 0 0.35em;
+.task-refs-line-open {
+  cursor: pointer;
 }
 
-.task-refs-kind-task { color: #4ec9b0; border-color: #4ec9b0; }
-.task-refs-kind-file { color: #dcdcaa; border-color: #dcdcaa; }
+.task-refs-line-open:hover .task-refs-caret {
+  color: var(--mkui-fg, #ddd);
+}
 
-.task-refs-relation {
+.task-refs-caret {
+  width: 0.9em;
+  flex: none;
   color: var(--mkui-fg-mute, #858585);
-  font-style: italic;
 }
 
 .task-refs-taskid {
@@ -91,6 +116,14 @@
 
 .task-refs-label {
   overflow-wrap: anywhere;
+}
+
+/* Whose reference this is, when it belongs to a task split from this one. */
+.task-refs-owner {
+  margin-left: auto;
+  font-size: 0.8em;
+  white-space: nowrap;
+  color: var(--mkui-fg-mute, #858585);
 }
 
 .task-refs-goto {
@@ -118,6 +151,66 @@
   font-size: 0.85em;
   color: var(--mkui-fg-mute, #858585);
   overflow-wrap: anywhere;
+}
+
+/* Images: a grid of thumbnails, the open one full size beneath it. */
+.task-refs-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  padding: 0.35em 0.25em 0.1em;
+}
+
+.task-refs-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  width: 96px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-refs-tile:hover {
+  border-color: var(--mkui-border, #555);
+}
+
+.task-refs-tile-open {
+  border-color: var(--mkui-fg-mute, #858585);
+}
+
+/* The tile state.selected_ref points at. */
+.task-refs-tile-marked {
+  border-color: var(--mkui-accent, #4ec9b0);
+  background: var(--mkui-bg-alt, rgba(255, 255, 255, 0.08));
+}
+
+.task-refs-thumb {
+  width: 100%;
+  height: 68px;
+  object-fit: cover;
+  border-radius: 3px;
+  background: var(--mkui-bg-alt, rgba(255, 255, 255, 0.04));
+}
+
+.task-refs-tile-label,
+.task-refs-tile-owner {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75em;
+}
+
+/* Always in the DOM, empty for the selected task's own: every caption is two
+   lines tall, so a tile with an owner does not stand taller than its row. */
+.task-refs-tile-owner {
+  min-height: 1.2em;
+  color: var(--mkui-fg-mute, #858585);
 }
 
 .task-refs-image-link {
