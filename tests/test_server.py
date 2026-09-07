@@ -93,6 +93,33 @@ async def _snapshot(ws, subid):
     return {r["title"]: r for r in snap["rows"]}
 
 
+async def _request(ws, service, data):
+    await ws.send_json({"service": service, "type": "request", "reqid": "rq", "data": data})
+    resp = await _recv_json(ws)
+    assert resp["type"] == "reply", resp
+    return resp["rows"]
+
+
+async def _add(ws, title, ref):
+    """Add a task and return its Task ID (from the task_get lookup by title order)."""
+    await _txn(ws, "add", {"title": title}, ref)
+    rows = await _snapshot(ws, f"s-{ref}")
+    return rows[title]["task_id"]
+
+
+async def _refs(ws, task_id):
+    return await _request(ws, "task_refs_get", {"task_id": task_id})
+
+
+async def _add_ref(ws, task_id, ref, expect="result", **fields):
+    return await _txn(ws, "add_ref", {"task_id": task_id, **fields}, ref, expect=expect)
+
+
+async def _upload(session, server, body, mime):
+    async with session.post(server + "/files", data=body, headers={"Content-Type": mime}) as resp:
+        return resp.status, (await resp.json() if resp.status == 200 else await resp.text())
+
+
 class TestHttp:
     async def test_routes(self, server):
         async with aiohttp.ClientSession() as s:
@@ -111,8 +138,8 @@ class TestHttp:
         async with aiohttp.ClientSession() as s:
             async with s.get(server + "/api/services") as resp:
                 names = {svc["name"] for svc in await resp.json()}
-        assert {"tasks", "all_tasks", "mkui_layouts",
-                "mkui_layouts_list", "mkui_layouts_get"} <= names
+        assert {"tasks", "all_tasks", "task_refs", "task_get", "task_refs_get", "task_options",
+                "mkui_layouts", "mkui_layouts_list", "mkui_layouts_get"} <= names
 
 
 class TestWebSocket:
@@ -453,6 +480,280 @@ class TestSplit:
                 snap = await _recv_json(ws)
                 await ws.send_json({"service": "all_tasks", "type": "unsubscribe", "subid": "F-q"})
         assert [r["title"] for r in snap["rows"]] == ["F-child"]
+
+
+class TestLiveDelete:
+    async def test_subtree_delete_announces_every_row(self, server):
+        """A live subscriber must hear each deleted Task ID, not the parent's
+        for every row: mkio announces a delete with the request's data, so
+        the cascade sends one request per row."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Live parent", "ld1")
+                await _split(ws, parent, "Live child", "ld2")
+                await _split(ws, parent, "Live child 2", "ld3")
+                children = {r["task_id"] for r in (await _snapshot(ws, "ld4")).values()
+                            if r["parent_task_id"] == parent}
+                await ws.send_json({"service": "all_tasks", "type": "subscribe",
+                                    "protocol": "query", "subid": "live", "ref": "ld5"})
+                await _recv_json(ws)  # snapshot
+                await ws.send_json({"service": "tasks", "type": "transaction", "op": "delete",
+                                    "data": {"task_id": parent}, "ref": "ld6"})
+                deleted = set()
+                while True:
+                    msg = await _recv_json(ws)
+                    if msg["type"] == "result":
+                        break
+                    assert msg["type"] == "update" and msg["op"] == "delete", msg
+                    deleted.add(msg["row"]["task_id"])
+                await ws.send_json({"service": "all_tasks", "type": "unsubscribe", "subid": "live"})
+        assert deleted == {parent} | children
+
+
+class TestReferences:
+    async def test_url_text_and_file_references(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Refs", "rf1")
+                await _add_ref(ws, task, "rf2", kind="url", href="https://example.com/x")
+                await _add_ref(ws, task, "rf3", kind="text", body="Subject: hi\n\nlong body")
+                await _add_ref(ws, task, "rf4", kind="file", href="/files/abc.png", mime="image/png", label="shot.png")
+                await asyncio.sleep(0.2)
+                rows = {r["kind"]: r for r in await _refs(ws, task)}
+        assert rows["url"]["label"] == "https://example.com/x", "label defaults to the URL"
+        assert rows["url"]["href"] == "https://example.com/x"
+        assert rows["text"]["label"] == "Subject: hi", "label defaults to the first line"
+        assert rows["text"]["href"] == "" and rows["text"]["body"].endswith("long body")
+        assert rows["file"]["label"] == "shot.png" and rows["file"]["mime"] == "image/png"
+        assert all(r["relation"] == "" for r in rows.values())
+        assert all(r["ref_id"] > 0 for r in rows.values())
+
+    async def test_add_ref_validation(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Validation", "rv1")
+                r = await _add_ref(ws, "TKMA99999999", "rv2", expect="error", kind="url", href="h")
+                assert "no task" in r["message"]
+                r = await _add_ref(ws, task, "rv3", expect="error", kind="bogus", href="h")
+                assert "kind" in r["message"]
+                r = await _add_ref(ws, task, "rv4", expect="error", kind="url", href="")
+                assert "URL" in r["message"]
+                r = await _add_ref(ws, task, "rv5", expect="error", kind="text", body="  ")
+                assert "text" in r["message"]
+                r = await _add_ref(ws, task, "rv6", expect="error", kind="file", href="elsewhere.png")
+                assert "/files/" in r["message"]
+                assert await _refs(ws, task) == []
+
+    async def test_edit_ref_keeps_kind_specific_fields(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Edit refs", "re1")
+                await _add_ref(ws, task, "re2", kind="file", href="/files/keep.pdf", mime="application/pdf")
+                await _add_ref(ws, task, "re3", kind="url", href="https://a")
+                await asyncio.sleep(0.2)
+                rows = {r["kind"]: r for r in await _refs(ws, task)}
+                await _txn(ws, "edit_ref", {"ref_id": rows["file"]["ref_id"], "label": "Spec",
+                                            "href": "/files/other.pdf", "updated_at": NOW}, "re4")
+                await _txn(ws, "edit_ref", {"ref_id": rows["url"]["ref_id"], "label": "",
+                                            "href": "https://b", "updated_at": NOW}, "re5")
+                r = await _txn(ws, "edit_ref", {"ref_id": rows["url"]["ref_id"], "label": "x",
+                                                "href": "", "updated_at": NOW}, "re6", expect="error")
+                assert "URL" in r["message"]
+                await asyncio.sleep(0.2)
+                after = {r["kind"]: r for r in await _refs(ws, task)}
+        assert after["file"]["label"] == "Spec"
+        assert after["file"]["href"] == "/files/keep.pdf", "a file's href is not editable"
+        assert after["url"]["href"] == "https://b"
+        assert after["url"]["label"] == "https://b", "an emptied label falls back to the URL"
+        assert after["url"]["updated_at"] == NOW
+
+    async def test_delete_ref(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Delete refs", "rd1")
+                await _add_ref(ws, task, "rd2", kind="url", href="https://a")
+                await asyncio.sleep(0.2)
+                [row] = await _refs(ws, task)
+                await _txn(ws, "delete_ref", {"ref_id": row["ref_id"]}, "rd3")
+                await asyncio.sleep(0.2)
+                assert await _refs(ws, task) == []
+                await _txn(ws, "delete_ref", {"ref_id": row["ref_id"]}, "rd4")  # gone already: harmless
+
+    async def test_task_delete_takes_its_references(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Doomed", "rt1")
+                await _split(ws, parent, "Doomed child", "rt2")
+                await asyncio.sleep(0.2)
+                child = next(r["task_id"] for r in (await _snapshot(ws, "rt3")).values()
+                             if r["parent_task_id"] == parent)
+                await _add_ref(ws, parent, "rt4", kind="url", href="https://p")
+                await _add_ref(ws, child, "rt5", kind="url", href="https://c")
+                await asyncio.sleep(0.2)
+                await _txn(ws, "delete", {"task_id": parent}, "rt6")
+                await asyncio.sleep(0.2)
+                assert await _refs(ws, parent) == []
+                assert await _refs(ws, child) == []
+
+    async def test_references_are_filterable_server_side(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Filter A", "rq1")
+                b = await _add(ws, "Filter B", "rq2")
+                await _add_ref(ws, a, "rq3", kind="url", href="https://a")
+                await _add_ref(ws, b, "rq4", kind="text", body="b")
+                await asyncio.sleep(0.2)
+                await ws.send_json({"service": "task_refs", "type": "subscribe", "protocol": "query",
+                                    "subid": "rq", "ref": "rq5", "filter": f"task_id == '{b}'"})
+                snap = await _recv_json(ws)
+                await ws.send_json({"service": "task_refs", "type": "unsubscribe", "subid": "rq"})
+        assert [r["task_id"] for r in snap["rows"]] == [b]
+        assert snap["rows"][0]["kind"] == "text"
+
+
+class TestTaskLinks:
+    async def test_link_writes_both_sides(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Blocker", "tl1")
+                b = await _add(ws, "Blocked", "tl2")
+                await _add_ref(ws, a, "tl3", kind="task", relation="blocks", href=b, label="ignored")
+                await asyncio.sleep(0.2)
+                [ra] = await _refs(ws, a)
+                [rb] = await _refs(ws, b)
+        assert (ra["kind"], ra["relation"], ra["href"], ra["label"]) == ("task", "blocks", b, "Blocked")
+        assert (rb["kind"], rb["relation"], rb["href"], rb["label"]) == ("task", "blocked_by", a, "Blocker")
+        assert ra["ref_id"] != rb["ref_id"]
+
+    async def test_link_validation_writes_nothing(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Lonely", "tv1")
+                b = await _add(ws, "Other", "tv2")
+                r = await _add_ref(ws, a, "tv3", expect="error", kind="task", relation="relates", href=a)
+                assert "itself" in r["message"]
+                r = await _add_ref(ws, a, "tv4", expect="error", kind="task", relation="eats", href=b)
+                assert "relation" in r["message"]
+                r = await _add_ref(ws, a, "tv5", expect="error", kind="task", relation="blocks", href="TKMA99999998")
+                assert "no task" in r["message"]
+                await _add_ref(ws, a, "tv6", kind="task", relation="blocks", href=b)
+                r = await _add_ref(ws, a, "tv7", expect="error", kind="task", relation="blocks", href=b)
+                assert "already blocks" in r["message"]
+                await _add_ref(ws, a, "tv8", kind="task", relation="relates", href=b)  # a second relation is fine
+                await asyncio.sleep(0.2)
+                assert len(await _refs(ws, a)) == 2
+                assert len(await _refs(ws, b)) == 2
+
+    async def test_unlink_removes_both_sides(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Unlink A", "tu1")
+                b = await _add(ws, "Unlink B", "tu2")
+                await _add_ref(ws, a, "tu3", kind="task", relation="relates", href=b)
+                await asyncio.sleep(0.2)
+                [rb] = await _refs(ws, b)
+                await _txn(ws, "delete_ref", {"ref_id": rb["ref_id"]}, "tu4")  # from the mirror side
+                await asyncio.sleep(0.2)
+                assert await _refs(ws, a) == []
+                assert await _refs(ws, b) == []
+
+    async def test_link_label_follows_the_linked_task(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Old title", "tt1")
+                b = await _add(ws, "Watcher", "tt2")
+                await _add_ref(ws, b, "tt3", kind="task", relation="relates", href=a)
+                await asyncio.sleep(0.2)
+                await _txn(ws, "edit", {"task_id": a, "title": "New title", "notes": "", "importance": 3,
+                                        "urgency": 3, "due": "", "updated_at": NOW}, "tt4")
+                [rb] = await _refs(ws, b)
+                r = await _txn(ws, "edit_ref", {"ref_id": rb["ref_id"], "label": "Mine", "updated_at": NOW},
+                               "tt5", expect="error")
+                await asyncio.sleep(0.2)
+                [rb] = await _refs(ws, b)
+        assert rb["label"] == "New title"
+        assert "edit that task" in r["message"]
+
+    async def test_deleting_either_task_removes_the_link(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Goes away", "td1")
+                b = await _add(ws, "Stays", "td2")
+                c = await _add(ws, "Stays too", "td3")
+                await _add_ref(ws, a, "td4", kind="task", relation="blocks", href=b)
+                await _add_ref(ws, c, "td5", kind="task", relation="relates", href=a)
+                await _add_ref(ws, b, "td6", kind="url", href="https://keep")
+                await asyncio.sleep(0.2)
+                await _txn(ws, "delete", {"task_id": a}, "td7")
+                await asyncio.sleep(0.2)
+                assert await _refs(ws, a) == []
+                assert [r["kind"] for r in await _refs(ws, b)] == ["url"], "b's own reference survives"
+                assert await _refs(ws, c) == []
+
+    async def test_task_options_lists_open_tasks_but_not_self(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Option self", "to1")
+                b = await _add(ws, "Option other", "to2")
+                c = await _add(ws, "Option complete", "to3")
+                await _complete(ws, c, "to4")
+                await asyncio.sleep(0.2)
+                rows = await _request(ws, "task_options", {"task_id": a})
+                got = {r["value"]: r["label"] for r in rows}
+                [task] = await _request(ws, "task_get", {"task_id": b})
+        assert a not in got and c not in got
+        assert got[b] == f"{b}  Option other"
+        assert task["title"] == "Option other" and task["status"] == "open"
+
+
+class TestFiles:
+    def test_upload_and_cleanup(self, tmp_path):
+        files = tmp_path / "refs"
+        proc, base = _start("--user", "mark", "--files", str(files))
+        try:
+            asyncio.run(self._upload_and_cleanup(base, files))
+        finally:
+            _stop(proc)
+
+    async def _upload_and_cleanup(self, base, files):
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 100
+        async with aiohttp.ClientSession() as s:
+            status, up = await _upload(s, base, png, "image/png")
+            assert status == 200
+            digest = __import__("hashlib").sha256(png).hexdigest()
+            assert up == {"href": f"/files/{digest}.png", "mime": "image/png", "size": len(png)}
+            assert (files / f"{digest}.png").read_bytes() == png
+            status, again = await _upload(s, base, png, "image/png")
+            assert again == up, "content-addressed: the same bytes are one file"
+            async with s.get(base + up["href"]) as resp:
+                assert resp.status == 200
+                assert resp.headers["Content-Type"].startswith("image/png")
+                assert await resp.read() == png
+            status, body = await _upload(s, base, b"", "image/png")
+            assert status == 400
+            status, body = await _upload(s, base, b"x" * (20 * 1024 * 1024 + 1), "application/octet-stream")
+            assert status == 413
+            status, bin_ = await _upload(s, base, b"?", "application/x-unknown-thing")
+            assert bin_["href"].endswith(".bin")
+            status, txt = await _upload(s, base, b"hello", "text/plain; charset=utf-8")
+            assert txt["href"].endswith(".txt") and txt["mime"] == "text/plain"
+
+            async with s.ws_connect(base + "/ws") as ws:
+                a = await _add(ws, "File A", "fa")
+                b = await _add(ws, "File B", "fb")
+                await _add_ref(ws, a, "f1", kind="file", href=up["href"], mime=up["mime"])
+                await _add_ref(ws, b, "f2", kind="file", href=up["href"], mime=up["mime"])
+                await _add_ref(ws, b, "f3", kind="file", href=txt["href"], mime=txt["mime"])
+                await asyncio.sleep(0.2)
+                [ra] = await _refs(ws, a)
+                await _txn(ws, "delete_ref", {"ref_id": ra["ref_id"]}, "f4")
+                await asyncio.sleep(0.2)
+                assert (files / f"{digest}.png").exists(), "b still refers to it"
+                await _txn(ws, "delete", {"task_id": b}, "f5")
+                await asyncio.sleep(0.3)
+                assert not (files / f"{digest}.png").exists(), "the last reference went with task b"
+                assert not (files / txt["href"].rsplit("/", 1)[1]).exists()
+                assert (files / bin_["href"].rsplit("/", 1)[1]).exists(), "never referenced, never touched"
 
 
 class TestSavedLayouts:

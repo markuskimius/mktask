@@ -19,6 +19,10 @@ in a browser.
 v0.2.0: 124 tests pass and the tree, Split dialog, cascades, and the red
 Delete button were exercised in a browser.
 
+**Status (2026-09-06):** Phase 7 (references, task links, file uploads, the
+References pane following the selection) shipped as v0.3.0: 168 tests pass
+and every flow was exercised in a browser.
+
 ## Target layout
 
 ```
@@ -230,6 +234,92 @@ or bare "ID" anywhere.
 - A **Subtasks pane** following the selection (`parent_task_id` is already
   server-filterable).
 - Persisting tree **expansion state** in saved layouts (mkui).
+
+## Phase 7 — references and task links (2026-09-06)
+
+A task carries zero or more *references*: things to refer back to — a URL,
+an email, a pasted snippet of a conversation, a screenshot, or another task.
+Vocabulary: *reference* (never "attachment"); *link* means only a
+task-to-task reference, with a *relation*; the other end is the *linked
+task*.
+
+- **One table, `task_refs`**, for every kind, task links included. The
+  first draft had a separate `task_links` table joined to `tasks` for the
+  linked title, but mkio's query service cannot keep a JOIN live (it
+  publishes the bare primary-table row and drops secondary-table changes),
+  and a UNION of two tables has the same problem. "Everything a task points
+  at, live, in one pane" therefore needs one plain table. Columns: `ref_id`
+  (AUTOINCREMENT), `task_id` (owner), `kind` (`url` | `text` | `file` |
+  `task`), `relation` (task links only), `label`, `href` (URL, file path,
+  or linked Task ID by kind), `body` (snippets), `mime` (files),
+  timestamps. One-to-many: a reference belongs to one task.
+- **A task link is two mirrored rows**, one per side with inverse relations
+  (`blocks` / `blocked_by`, `relates` / `relates`), written and deleted
+  together, so a pane filtered on `task_id` shows every link from that
+  task's side with no client logic. The label carries the linked task's
+  title and `edit` on a task rewrites it on every row that points there
+  (same transaction). `add_ref` refuses a self-link, an unknown relation or
+  task, and a duplicate, writing nothing. A task delete removes rows the
+  subtree owns *or is linked to*.
+- **Files on disk, not in SQLite** (query subscribers receive whole rows):
+  `<db>.files/` beside the database (`mktask.db.files/`, covered by the
+  `*.db*` gitignore entry; a temp dir for `:memory:`), `--files DIR` to
+  override — a CLI/`serve()` argument like `user`, never a TOML key.
+  `POST /files` (a custom aiohttp route via `create_app(routes=…)`) stores
+  the raw body as `<sha256>.<ext>` under a 20 MB cap, streamed past
+  aiohttp's 1 MB `client_max_size`; the rows are the only tracking of a
+  file, and `delete_ref` / task delete unlink a file no row names any more.
+- **The live-delete bug.** mkio announces a delete with the *request's*
+  data, so the phase-6 subtree delete announced the parent's Task ID for
+  every row and a live table kept the children until reload. Deletes now go
+  one request per row (`_submit_each`, gathered into one batch);
+  `test_subtree_delete_announces_every_row` pins it.
+- **UI.** `Reference` (URL or snippet; `showWhen` on `kind`) and `Link`
+  (relation + a task picker fed by the `task_options` reqrep through
+  `optionsFrom`, so the user sees titles and never the task itself) buttons
+  on the Tasks pane; two buttons because a dialog cannot have two fields
+  named `href`. A References pane under Tasks (vertical split): `LINK` on
+  the label for URLs and files, relations worded per side, Edit gated off
+  task links, red Delete with the readonly confirmation. `static/refs.js`
+  registers the `task-refs` widget: in the Detail pane a drop box (drop,
+  paste, or click to pick a file → upload → `add_ref`; a pasted URL or text
+  becomes a reference with no upload; the paste listener is on `window`,
+  active while a task is selected and no text field has focus) and a
+  preview of the reference selected in the References pane (image inline,
+  snippet in full, "Go to" on a task link). "Go to" fetches the task
+  (`task_get`), publishes `state.linked_task`, and `pane.show`s the Linked
+  Task pane — text widgets plus `task-refs` in `mode = "linked"` listing
+  that task's references (`task_refs_get`, refetched per task) with their
+  own "Go to". mkui has no select-a-row action, so "Go to" opens a viewer
+  rather than moving the Tasks selection; panes are config singletons, so
+  it is one window replaced per jump.
+- **Tests.** `test_server.py`: kinds and label defaults, validation, edit
+  rules (a file's href is fixed, a task link is not editable), delete_ref,
+  task delete cascade, server-side filter, both sides of a link, unlink
+  from either side, relabel, delete either end, `task_options`, upload
+  round-trip / dedupe / 400 / 413 / extension mapping / cleanup, the live
+  delete announcement. `test_config.py`: `--files`, files dir derivation
+  (beside the db, override, temp for memory), the route list.
+  `test_ui_config.py` generalized to every table pane, plus the dialogs,
+  the widget registration, `refs.js` against declared services and state,
+  and the frame/menu reachability rule. Exercised in a browser: Reference
+  and Link dialogs, synthetic paste of a PNG and of text, inline image
+  preview, Go to, Edit, Delete of one side of a link.
+
+### Deferred from phase 7
+
+- **mkui**: a state-bound table filter (`filters.task_id =
+  "${state.selected_task.task_id}"`, re-applied on change) would let the
+  References pane follow the selection from JSON alone; today `refs.js`
+  fires `table.filter` on each selection change, which works but lives in
+  the widget. A `_select` hook and `table.select` action so "Go to" can
+  move the Tasks selection; a `file` dialog field type so the drop box
+  could retire.
+- **Prioritization hook**: `blocked_by` an open task should lower the
+  blocked task's score. The mirrored rows make "is this task blocked" one
+  filtered read.
+- A per-task Linked Task window (panes are singletons today).
+- Auth on `POST /files` if the app ever leaves loopback.
 
 ## Deferred (not in the skeleton)
 

@@ -17,6 +17,17 @@ auto_migrate = true
 [tables.tasks]
 columns = { task_id = "TEXT PRIMARY KEY", parent_task_id = "TEXT NOT NULL DEFAULT ''", title = "TEXT NOT NULL", notes = "TEXT NOT NULL DEFAULT ''", status = "TEXT NOT NULL DEFAULT 'open'", importance = "INTEGER NOT NULL DEFAULT 3", urgency = "INTEGER NOT NULL DEFAULT 3", due = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", completed_at = "TEXT NOT NULL DEFAULT ''" }
 
+# One row per reference: something a task points at. kind is "url" (href =
+# the URL, including mailto: and mail-client deep links), "text" (body = a
+# pasted snippet), "file" (href = "/files/<sha256>.<ext>" under the files
+# directory, mime = its content type), or "task" (href = the linked task's
+# Task ID, relation = "blocks" | "blocked_by" | "relates", label = that
+# task's title, kept fresh by TaskTransactions). A task link is stored as
+# two mirrored rows, one per side, so a pane filtered on task_id shows every
+# link of a task in either direction. label is what the UI shows.
+[tables.task_refs]
+columns = { ref_id = "INTEGER PRIMARY KEY AUTOINCREMENT", task_id = "TEXT NOT NULL", kind = "TEXT NOT NULL DEFAULT 'url'", relation = "TEXT NOT NULL DEFAULT ''", label = "TEXT NOT NULL DEFAULT ''", href = "TEXT NOT NULL DEFAULT ''", body = "TEXT NOT NULL DEFAULT ''", mime = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
+
 # The Task ID sequence: one row, name = "task", last = the last number issued.
 # Written in the same transaction as each insert so numbers are never reused
 # or skipped.
@@ -36,7 +47,11 @@ columns = { id = "INTEGER PRIMARY KEY AUTOINCREMENT", app = "TEXT NOT NULL DEFAU
 # `add` and `split` get a server-assigned task_id (the `task_id = ""` and
 # `last = 0` defaults mark server-filled fields; a request carrying its own
 # task_id is rejected), and `complete`, `reopen`, and `delete` cascade over
-# the subtree (complete, delete) or the ancestors (reopen).
+# the subtree (complete, delete) or the ancestors (reopen). The `*_ref` ops
+# manage task_refs: `add_ref` of kind "task" writes the row and its mirror,
+# `delete_ref` removes both, `edit` refreshes the label on every row that
+# links to the edited task (`relabel_ref`), and a task delete takes the
+# subtree's references with it.
 [services.tasks]
 protocol = "mktask.services.TaskTransactions"
 description = "Add, split, edit, complete, reopen, and delete tasks"
@@ -62,12 +77,45 @@ reopen = [
 delete = [
     { table = "tasks", op_type = "delete", key = ["task_id"] },
 ]
+add_ref = [
+    { table = "task_refs", op_type = "insert", fields = ["task_id", "kind", "relation", "label", "href", "body", "mime"], defaults = { kind = "url", relation = "", label = "", href = "", body = "", mime = "" } },
+]
+edit_ref = [
+    { table = "task_refs", op_type = "update", key = ["ref_id"], fields = ["label", "href", "body", "updated_at"], defaults = { href = "", body = "" } },
+]
+relabel_ref = [
+    { table = "task_refs", op_type = "update", key = ["ref_id"], fields = ["label"] },
+]
+delete_ref = [
+    { table = "task_refs", op_type = "delete", key = ["ref_id"] },
+]
 
 [services.all_tasks]
 protocol = "query"
 description = "Every task, live"
 primary_table = "tasks"
 filterable = ["status", "parent_task_id"]
+
+[services.task_refs]
+protocol = "query"
+description = "Every reference of every task, live"
+primary_table = "task_refs"
+filterable = ["task_id", "kind", "relation"]
+
+[services.task_get]
+protocol = "reqrep"
+description = "One task by Task ID"
+sql = "SELECT * FROM tasks WHERE task_id = :task_id"
+
+[services.task_refs_get]
+protocol = "reqrep"
+description = "The references of one task, newest first"
+sql = "SELECT * FROM task_refs WHERE task_id = :task_id ORDER BY ref_id DESC"
+
+[services.task_options]
+protocol = "reqrep"
+description = "Open tasks other than the given one, as value/label pairs for a dialog select"
+sql = "SELECT task_id AS value, task_id || '  ' || title AS label FROM tasks WHERE status = 'open' AND task_id != :task_id ORDER BY task_id"
 
 [services.mkui_layouts]
 protocol = "transaction"
@@ -89,6 +137,8 @@ sql = "SELECT id, saved, layout FROM mkui_layouts WHERE id = :id"
 
 # ─── Static files ───────────────────────────────────────────────────
 # "__mkui__" resolves to the installed mkui package's static directory.
+# serve() adds "/files" (uploaded reference files) at runtime: the directory
+# lives beside the database, not the config.
 
 [static]
 "/" = "./static"

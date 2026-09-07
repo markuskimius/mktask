@@ -3,17 +3,31 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import getpass
+import hashlib
+import mimetypes
+import os
+import shutil
 import socket
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
+from aiohttp import web
 from mkio import create_app
 from mkio.config import load_config
 
 from mktask import __version__
-from mktask.services import user_prefix
+from mktask.services import FILES_ROUTE, user_prefix
+
+MAX_UPLOAD = 20 * 1024 * 1024  # bytes; a screenshot is well under 1 MB
+_EXTENSIONS = {  # mimetypes' guesses are unfriendly for the common ones
+    "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp",
+    "image/svg+xml": ".svg", "text/plain": ".txt", "text/html": ".html", "application/pdf": ".pdf",
+    "message/rfc822": ".eml", "application/json": ".json",
+}
 
 
 def serve(
@@ -22,11 +36,14 @@ def serve(
     port: int | None = None,
     db_path: str | None = None,
     user: str | None = None,
+    files_dir: str | Path | None = None,
 ) -> None:
     """Start the mktask server. Blocks until shutdown.
 
     `user` (default: the OS login name) supplies the two prefix letters of
-    every Task ID this server assigns.
+    every Task ID this server assigns. `files_dir` (default: `<db_path>.files`
+    beside the database, a temporary directory for `:memory:`) holds uploaded
+    reference files, served at /files and accepted at POST /files.
     """
     cfg = _load_config(config)
     if host is not None:
@@ -37,21 +54,73 @@ def serve(
         cfg["db_path"] = db_path
     if user is None:
         user = getpass.getuser()
+    files = _files_dir(cfg.get("db_path", "mkio.db"), files_dir)
+    files.mkdir(parents=True, exist_ok=True)
+    cfg.setdefault("static", {})[FILES_ROUTE.rstrip("/")] = str(files)
     if "tasks" in cfg.get("services", {}):
         cfg["services"]["tasks"]["prefix"] = user_prefix(user)
+        cfg["services"]["tasks"]["files_dir"] = str(files)
 
     # Probe the port before anything else starts: a bind failure inside
     # app.start() happens after the startup hooks have opened the database,
     # whose aiosqlite threads then keep the process alive after the traceback.
     _check_port(cfg["host"], cfg["port"])
 
-    app = create_app(cfg)
+    app = create_app(cfg, routes=[("POST", FILES_ROUTE.rstrip("/"), _upload_handler(files))])
 
     async def announce() -> None:
-        print(_banner(cfg, config, user), flush=True)
+        print(_banner(cfg, config, user, files), flush=True)
 
     app.on_startup(announce)
     app.run()
+
+
+def _files_dir(db_path: str, files_dir: str | Path | None) -> Path:
+    """Where uploaded files live: the given directory, else `<db_path>.files`
+    beside the database, else (in-memory database) a temp dir removed at exit."""
+    if files_dir is not None:
+        return Path(files_dir)
+    if db_path == ":memory:":
+        tmp = Path(tempfile.mkdtemp(prefix="mktask-files-"))
+        atexit.register(shutil.rmtree, tmp, True)
+        return tmp
+    return Path(f"{db_path}.files")
+
+
+def _extension(mime: str) -> str:
+    return _EXTENSIONS.get(mime) or mimetypes.guess_extension(mime) or ".bin"
+
+
+def _upload_handler(files: Path):
+    """POST /files: the raw body becomes `<sha256>.<ext>` under `files`.
+
+    Content-addressed names dedupe repeats and keep client-supplied names off
+    the filesystem. The body is streamed under our own cap rather than
+    aiohttp's 1 MB `client_max_size`, which `request.read()` would enforce.
+    """
+    async def handler(request: web.Request) -> web.Response:
+        mime = (request.content_type or "application/octet-stream").lower()
+        if request.content_length is not None and request.content_length > MAX_UPLOAD:
+            raise web.HTTPRequestEntityTooLarge(max_size=MAX_UPLOAD, actual_size=request.content_length)
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.content.iter_chunked(64 * 1024):
+            size += len(chunk)
+            if size > MAX_UPLOAD:
+                raise web.HTTPRequestEntityTooLarge(max_size=MAX_UPLOAD, actual_size=size)
+            chunks.append(chunk)
+        body = b"".join(chunks)
+        if not body:
+            raise web.HTTPBadRequest(text="empty upload")
+        name = hashlib.sha256(body).hexdigest() + _extension(mime)
+        path = files / name
+        if not path.exists():
+            tmp = files / f".{name}.{os.getpid()}.part"
+            tmp.write_bytes(body)
+            os.replace(tmp, path)
+        return web.json_response({"href": FILES_ROUTE + name, "mime": mime, "size": len(body)})
+
+    return handler
 
 
 def _check_port(host: str, port: int) -> None:
@@ -66,7 +135,8 @@ def _check_port(host: str, port: int) -> None:
         raise SystemExit(1) from None
 
 
-def _banner(cfg: dict[str, Any], config: str | Path | dict[str, Any], user: str | None = None) -> str:
+def _banner(cfg: dict[str, Any], config: str | Path | dict[str, Any], user: str | None = None,
+            files: Path | None = None) -> str:
     """Startup summary: where the UI is and what it is running on."""
     host = cfg.get("host", "127.0.0.1")
     port = cfg.get("port", 8080)
@@ -90,6 +160,8 @@ def _banner(cfg: dict[str, Any], config: str | Path | dict[str, Any], user: str 
     ]
     if user is not None:
         lines.append(f"  Task IDs:  TK{user_prefix(user)}nnnnnnnn (user {user!r})")
+    if files is not None:
+        lines.append(f"  Files:     {files.resolve()}")
     lines.append("  Press Ctrl+C to stop.")
     return "\n".join(lines)
 
@@ -152,6 +224,10 @@ def main() -> None:
         help="username whose first two letters prefix new Task IDs (default: the OS login name)",
     )
     parser.add_argument(
+        "--files", default=None, metavar="DIR",
+        help="directory for uploaded reference files (default: <db>.files beside the database)",
+    )
+    parser.add_argument(
         "--version", action="version", version=f"mktask {__version__}",
     )
     args = parser.parse_args()
@@ -164,7 +240,7 @@ def main() -> None:
     if not Path(config_path).is_file():
         print(f"Error: config file not found: {config_path}", file=sys.stderr)
         sys.exit(1)
-    serve(config_path, host=args.host, port=args.port, db_path=db_path, user=args.user)
+    serve(config_path, host=args.host, port=args.port, db_path=db_path, user=args.user, files_dir=args.files)
 
 
 if __name__ == "__main__":

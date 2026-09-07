@@ -125,64 +125,98 @@ def tasks_pane(app_config) -> dict:
     return app_config["panes"]["tasks"]
 
 
+def _table_panes(app_config):
+    return [(pid, p) for pid, p in app_config["panes"].items() if p.get("type") == "mkio-table"]
+
+
+def _columns_of(pane, server_config) -> set:
+    """The columns a pane's query returns: its service's primary table."""
+    table = server_config["services"][pane["service"]]["primary_table"]
+    return set(server_config["tables"][table]["columns"])
+
+
 def _pane_columns(pane, table_columns):
     return table_columns | set(pane.get("values", {}))
 
 
-def test_table_columns_exist(tasks_pane, task_columns):
-    known = _pane_columns(tasks_pane, task_columns)
-    for key in ("columns", "visible"):
-        for col in tasks_pane.get(key, []):
-            assert col in known, f"{key} names unknown column {col}"
-    for key in ("labels", "styles", "types", "filters", "display"):
-        for col in tasks_pane.get(key, {}):
-            assert col in known, f"{key} names unknown column {col}"
+def test_table_columns_exist(app_config, server_config):
+    for pane_id, pane in _table_panes(app_config):
+        known = _pane_columns(pane, _columns_of(pane, server_config))
+        for key in ("columns", "visible"):
+            for col in pane.get(key, []):
+                assert col in known, f"{pane_id}.{key} names unknown column {col}"
+        for key in ("labels", "styles", "types", "filters", "display"):
+            for col in pane.get(key, {}):
+                assert col in known, f"{pane_id}.{key} names unknown column {col}"
 
 
-def test_sort_names_known_columns(tasks_pane, task_columns):
-    known = _pane_columns(tasks_pane, task_columns)
-    sort = tasks_pane.get("sort", [])
-    for spec in [sort] if isinstance(sort, str) else sort:
-        col = spec["col"] if isinstance(spec, dict) else spec.lstrip("-")
-        assert col in known, f"sort names unknown column {col}"
+def test_sort_names_known_columns(app_config, server_config):
+    for pane_id, pane in _table_panes(app_config):
+        known = _pane_columns(pane, _columns_of(pane, server_config))
+        sort = pane.get("sort", [])
+        for spec in [sort] if isinstance(sort, str) else sort:
+            col = spec["col"] if isinstance(spec, dict) else spec.lstrip("-")
+            assert col in known, f"{pane_id} sorts on unknown column {col}"
 
 
-def test_row_references_name_real_columns(app_config, task_columns):
-    """`${row.x}` in buttons and dialogs reads a column the query returns."""
-    text = json.dumps(app_config["panes"])
-    refs = set(re.findall(r"\$\{row\.([a-z_]+)", text)) | set(re.findall(r"\br\.([a-z_]+)", text))
-    assert refs, "expected at least one row reference"
-    assert refs <= task_columns, f"unknown row columns {refs - task_columns}"
+def test_row_references_name_real_columns(app_config, server_config):
+    """`${row.x}` in a pane's buttons and dialogs reads a column its query returns."""
+    seen = 0
+    for pane_id, pane in _table_panes(app_config):
+        text = json.dumps(pane.get("buttons", []))
+        refs = set(re.findall(r"\$\{row\.([a-z_]+)", text)) | set(re.findall(r"\br(?:ow)?\.([a-z_]+)", text))
+        seen += len(refs)
+        known = _columns_of(pane, server_config)
+        assert refs <= known, f"{pane_id} reads unknown row columns {refs - known}"
+    assert seen, "expected at least one row reference"
 
 
-def test_derived_values_read_real_columns(tasks_pane, task_columns):
-    for col, expr in tasks_pane.get("values", {}).items():
-        names = set(re.findall(r"\b([a-z_]+)\b", expr))
-        assert names <= task_columns, f"values.{col} reads unknown {names - task_columns}"
+def test_display_templates_read_real_columns(app_config, server_config):
+    for pane_id, pane in _table_panes(app_config):
+        known = _pane_columns(pane, _columns_of(pane, server_config)) | {"value", "row", "col", "state"}
+        for col, template in pane.get("display", {}).items():
+            body = re.sub(r"'[^']*'", "", template)
+            names = {n for n in re.findall(r"\b([a-z_]+)\b", body)}
+            assert names <= known, f"{pane_id}.display.{col} reads unknown {names - known}"
 
 
-def test_style_rules_read_known_names(tasks_pane, task_columns):
-    known = _pane_columns(tasks_pane, task_columns) | {"value", "row", "col", "state"}
-    rules = list(tasks_pane.get("rowStyle", []))
-    for col_rules in tasks_pane.get("styles", {}).values():
-        rules.extend(col_rules)
-    for rule in rules:
-        when = re.sub(r"'[^']*'", "", rule.get("when", ""))
-        names = {n for n in re.findall(r"\b([a-z_]+)\b", when)}
-        assert names <= known, f"style rule {when!r} reads unknown {names - known}"
+def test_derived_values_read_real_columns(app_config, server_config):
+    for pane_id, pane in _table_panes(app_config):
+        known = _columns_of(pane, server_config)
+        for col, expr in pane.get("values", {}).items():
+            names = set(re.findall(r"\b([a-z_]+)\b", expr))
+            assert names <= known, f"{pane_id}.values.{col} reads unknown {names - known}"
 
 
-def test_selection_state_declared(app_config, tasks_pane):
-    path = tasks_pane["select"]["state"]
-    assert path.split(".")[0] in app_config["state"]
+def test_style_rules_read_known_names(app_config, server_config):
+    for pane_id, pane in _table_panes(app_config):
+        known = _pane_columns(pane, _columns_of(pane, server_config)) | {"value", "row", "col", "state"}
+        rules = list(pane.get("rowStyle", []))
+        for col_rules in pane.get("styles", {}).values():
+            rules.extend(col_rules)
+        for rule in rules:
+            when = re.sub(r"'[^']*'", "", rule.get("when", ""))
+            names = {n for n in re.findall(r"\b([a-z_]+)\b", when)}
+            assert names <= known, f"{pane_id} style rule {when!r} reads unknown {names - known}"
+
+
+def test_selection_state_declared(app_config):
+    published = set()
+    for pane_id, pane in _table_panes(app_config):
+        if "select" in pane:
+            path = pane["select"]["state"]
+            assert path.split(".")[0] in app_config["state"], f"{pane_id} publishes undeclared state"
+            published.add(path)
+    assert {"selected_task", "selected_ref"} <= published
 
 
 def test_detail_pane_reads_real_columns(app_config, task_columns):
     """`state.selected_task.<col>` mirrors a row, so <col> must be a real column."""
-    text = json.dumps(app_config["panes"]["task-detail"])
-    cols = set(re.findall(r"state\.selected_task\.([a-z_]+)", text))
-    assert cols, "the detail pane reads the selected task"
-    assert cols <= task_columns, f"detail pane reads unknown {cols - task_columns}"
+    for pane_id, root in (("task-detail", "selected_task"), ("linked-task", "linked_task")):
+        text = json.dumps(app_config["panes"][pane_id])
+        cols = set(re.findall(rf"state\.{root}\.([a-z_]+)", text))
+        assert cols, f"{pane_id} reads state.{root}"
+        assert cols <= task_columns, f"{pane_id} reads unknown {cols - task_columns}"
 
 
 def test_text_widgets_read_declared_state(app_config):
@@ -200,6 +234,38 @@ def test_text_widgets_read_declared_state(app_config):
             assert w["bind"].split(".")[0] in roots
     for path in app_config["statusbar"].get("bindStyle", {}).values():
         assert path.split(".")[0] in roots
+
+
+def test_custom_widgets_are_registered(app_config):
+    """Every non-text widget type is registered by a module index.html imports."""
+    html = (STATIC / "index.html").read_text()
+    registered = set()
+    for path in re.findall(r'import\s*"/static/([^"]+)"', html):
+        registered |= set(re.findall(r'registerWidget\("([a-z-]+)"', (STATIC / path).read_text()))
+    for pane_id, pane in app_config["panes"].items():
+        for w in pane.get("widgets", []):
+            if w["type"] != "text":
+                assert w["type"] in registered, f"pane {pane_id} uses unregistered widget {w['type']}"
+
+
+def test_task_refs_widget_state_and_services(app_config, server_config):
+    """refs.js reads selected_task, selected_ref, and linked_task, calls two
+    request-reply services, opens the Linked Task pane, and posts to /files."""
+    js = (STATIC / "refs.js").read_text()
+    for root in ("selected_task", "selected_ref", "linked_task"):
+        assert root in app_config["state"], root
+        assert f'"{root}"' in js, f"refs.js does not read state.{root}"
+    for svc in re.findall(r'request\("([a-z_]+)"', js):
+        assert server_config["services"][svc]["protocol"] == "reqrep", svc
+    for op in re.findall(r'op: "([a-z_]+)"', js):
+        assert op in server_config["services"]["tasks"]["ops"], op
+    assert 'fireAction("pane.show"' in js
+    assert '"linked-task"' in js and "linked-task" in app_config["panes"]
+    assert 'fireAction("table.filter"' in js and '"references"' in js, "the References pane follows the selection"
+    assert "references" in app_config["panes"]
+    assert 'const UPLOAD_URL = "/files"' in js
+    modes = {w.get("mode") for p in app_config["panes"].values() for w in p.get("widgets", []) if w["type"] == "task-refs"}
+    assert modes == {None, "linked"}, "one drop box in Detail, one viewer in Linked Task"
 
 
 # ─── Dialogs ───────────────────────────────────────────────────────
@@ -262,25 +328,30 @@ def test_no_client_sends_server_filled_fields(app_config):
             assert not ({"task_id", "last"} & names), dialog["title"]
 
 
-def test_delete_button_is_red_only_when_armed(tasks_pane):
+def test_delete_buttons_are_red_only_when_armed(app_config):
     """A styled button must not change width between states: colors only."""
-    delete = next(b for b in tasks_pane["buttons"] if b["label"] == "Delete")
-    rules = delete["style"]
-    armed = next(r for r in rules if r.get("when") == "enabled")
-    assert armed["background"].lower() in ("#c62828", "red")
-    for rule in rules:
-        assert not ({"bold", "caps"} & set(rule)), "size-changing keys shift the toolbar"
-    assert all(set(r) - {"when"} <= {"color", "background"} for r in rules)
+    seen = 0
+    for pane_id, pane in _table_panes(app_config):
+        for delete in (b for b in pane.get("buttons", []) if b["label"] == "Delete"):
+            seen += 1
+            rules = delete["style"]
+            armed = next(r for r in rules if r.get("when") == "enabled")
+            assert armed["background"].lower() in ("#c62828", "red")
+            for rule in rules:
+                assert not ({"bold", "caps"} & set(rule)), "size-changing keys shift the toolbar"
+            assert all(set(r) - {"when"} <= {"color", "background"} for r in rules)
+    assert seen == 2, "Tasks and References each have a Delete"
 
 
-def test_row_buttons_declare_row_unit(tasks_pane):
-    for button in tasks_pane["buttons"]:
-        action = button["action"]
-        uses_row = "${row." in json.dumps(action)
-        if action["type"] == "dialog" and uses_row:
-            assert button.get("unit") == "row", f"{button['label']} prefills from a row"
-        if action["type"] == "transaction":
-            assert button["enable"].get("minSelected", 0) >= 1, button["label"]
+def test_row_buttons_declare_row_unit(app_config):
+    for pane_id, pane in _table_panes(app_config):
+        for button in pane.get("buttons", []):
+            action = button["action"]
+            uses_row = "${row." in json.dumps(action)
+            if action["type"] == "dialog" and uses_row:
+                assert button.get("unit") == "row", f"{pane_id}: {button['label']} prefills from a row"
+            if action["type"] == "transaction":
+                assert button["enable"].get("minSelected", 0) >= 1, button["label"]
 
 
 def test_status_gates_on_complete_and_reopen(tasks_pane):
@@ -325,6 +396,96 @@ def test_expand_menu_targets_the_tasks_pane(app_config):
     assert items["Collapse All"]["args"] == {"pane": "tasks"}
 
 
+# ─── References ────────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def references_pane(app_config) -> dict:
+    return app_config["panes"]["references"]
+
+
+def _dialog_by_op(app_config, pane_id, op, label=None):
+    pane = app_config["panes"][pane_id]
+    for button in pane["buttons"]:
+        dialog = button["action"].get("dialog")
+        if dialog and dialog["submit"]["op"] == op and (label is None or button["label"] == label):
+            return dialog
+    raise AssertionError(f"{pane_id} has no {op} dialog")
+
+
+def test_reference_dialog_offers_url_and_text(app_config):
+    from mktask.services import REF_KINDS
+    dialog = _dialog_by_op(app_config, "tasks", "add_ref", "Reference")
+    fields = {f["name"]: f for f in _walk(dialog["fields"]) if "name" in f}
+    assert fields["task_id"]["type"] == "hidden" and fields["task_id"]["value"] == "${row.task_id}"
+    kinds = [o["value"] for o in fields["kind"]["options"]]
+    assert kinds == ["url", "text"] and set(kinds) <= set(REF_KINDS)
+    assert fields["href"]["showWhen"] == "kind == 'url'" and fields["href"]["required"] is True
+    assert fields["body"]["showWhen"] == "kind == 'text'" and fields["body"]["required"] is True
+
+
+def test_link_dialog_picks_a_task_by_title(app_config, server_config):
+    from mktask.services import RELATIONS
+    dialog = _dialog_by_op(app_config, "tasks", "add_ref", "Link")
+    fields = {f["name"]: f for f in _walk(dialog["fields"]) if "name" in f}
+    assert fields["kind"] == {"name": "kind", "type": "hidden", "value": "task"}
+    assert [o["value"] for o in fields["relation"]["options"]] == list(RELATIONS)
+    href = fields["href"]
+    assert href["required"] is True
+    source = href["optionsFrom"]
+    svc = server_config["services"][source["service"]]
+    assert svc["protocol"] == "reqrep"
+    assert f":{next(iter(source['params']))}" in svc["sql"], "the select's params feed the SQL"
+    assert source["params"]["task_id"] == "${row.task_id}", "excludes the task itself"
+    assert {source["value"], source["label"]} == {"value", "label"}
+    assert "value" in svc["sql"] and "label" in svc["sql"]
+
+
+def test_references_pane_links_and_words_relations(references_pane):
+    from mktask.services import RELATIONS
+    label = references_pane["display"]["label"]
+    assert "LINK(label, href)" in label, "a reference with an href is a hyperlink"
+    assert "kind == 'task'" in label, "a Task ID is not a hyperlink"
+    relation = references_pane["display"]["relation"]
+    for name in RELATIONS:
+        assert f"relation == '{name}'" in relation, f"{name} is worded for display"
+    assert references_pane["select"]["state"] == "selected_ref"
+    assert references_pane["service"] == "task_refs"
+
+
+def test_reference_edit_never_touches_a_task_link(app_config):
+    pane = app_config["panes"]["references"]
+    edit = next(b for b in pane["buttons"] if b["label"] == "Edit")
+    assert "row.kind != 'task'" in edit["enable"]["when"]
+    dialog = edit["action"]["dialog"]
+    assert _hidden(dialog, "ref_id") == "${row.ref_id}"
+    fields = {f["name"]: f for f in _walk(dialog["fields"]) if "name" in f}
+    assert fields["href"]["showWhen"] == "row.kind == 'url'"
+    assert fields["body"]["showWhen"] == "row.kind == 'text'"
+    delete = _dialog_by_op(app_config, "references", "delete_ref")
+    assert _hidden(delete, "ref_id") == "${row.ref_id}"
+
+
+def test_reference_kinds_and_relations_match_the_service(server_config):
+    from mktask.services import RELATIONS, REF_KINDS
+    comment = (PKG / "mktask.toml").read_text()
+    for kind in REF_KINDS:
+        assert f'"{kind}"' in comment, f"kind {kind} is documented in the TOML"
+    for relation in RELATIONS:
+        assert f'"{relation}"' in comment, f"relation {relation} is documented in the TOML"
+    add_ref = server_config["services"]["tasks"]["ops"]["add_ref"][0]
+    assert add_ref["defaults"]["kind"] == "url"
+    assert "task_refs" in server_config["tables"]
+    assert set(server_config["services"]["task_refs"]["filterable"]) == {"task_id", "kind", "relation"}
+
+
+def test_main_frame_stacks_tasks_over_references(app_config):
+    main = next(f for f in app_config["frames"] if f["id"] == "main")
+    layout = main["layout"]
+    assert layout["type"] == "split" and layout["dir"] == "v"
+    assert [c["children"] for c in layout["children"]] == [["tasks"], ["references"]]
+    assert abs(sum(layout["ratios"]) - 1) < 1e-9
+
+
 # ─── Wiring ────────────────────────────────────────────────────────
 
 def test_expect_name_matches_server(app_config, server_config):
@@ -346,9 +507,16 @@ def test_window_menu_lists_open_windows(app_config):
     assert any(i.get("windows") is True for i in _walk(app_config["menubar"]))
 
 
-def test_frames_cover_every_pane_once(app_config):
+def test_frames_place_every_pane_once_or_menu_reaches_it(app_config):
+    """A pane is either in the default layout or opened on demand from the
+    Tasks menu (the Linked Task pane opens when a task link is followed)."""
     placed = [p for f in app_config["frames"] for p in _layout_panes(f["layout"])]
-    assert sorted(placed) == sorted(app_config["panes"])
+    assert len(placed) == len(set(placed)), "a pane placed twice"
+    assert set(placed) <= set(app_config["panes"])
+    shown = {i["args"] for i in _walk(app_config["menubar"]) if i.get("action") == "pane.show"}
+    assert shown == set(app_config["panes"]), "the Tasks menu shows every pane"
+    assert "linked-task" not in placed, "opened on demand, not at start"
+    assert {"tasks", "references", "task-detail"} <= set(placed)
     for frame in app_config["frames"]:
         assert 0 <= frame["x"] and frame["x"] + frame["w"] <= 1
         assert 0 <= frame["y"] and frame["y"] + frame["h"] <= 1

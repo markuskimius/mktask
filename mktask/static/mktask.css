@@ -17,3 +17,126 @@
   color: var(--mkui-fg-mute, #858585);
   font-size: 0.9em;
 }
+
+/* References: the task-refs widget (static/refs.js) in the Detail and Linked Task panes. */
+.task-detail-refs {
+  display: block;
+  padding: 0.5em 0.75em 0.75em;
+}
+
+.task-refs-dropbox {
+  border: 1px dashed var(--mkui-border, #555);
+  border-radius: 4px;
+  padding: 0.6em 0.75em;
+  color: var(--mkui-fg-mute, #858585);
+  font-size: 0.9em;
+  cursor: pointer;
+  user-select: none;
+}
+
+.task-refs-dropbox-over {
+  border-color: var(--mkui-accent, #4ec9b0);
+  color: var(--mkui-fg, #ddd);
+}
+
+.task-refs-dropbox-disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.task-refs-status {
+  min-height: 1.2em;
+  margin-top: 0.3em;
+  font-size: 0.85em;
+  color: var(--mkui-fg-mute, #858585);
+}
+
+.task-refs-error {
+  color: #f44747;
+}
+
+.task-refs-preview,
+.task-refs-list {
+  margin-top: 0.5em;
+}
+
+.task-refs-item {
+  padding: 0.35em 0;
+  border-top: 1px solid var(--mkui-border, #333);
+}
+
+.task-refs-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5em;
+}
+
+.task-refs-kind {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mkui-fg-mute, #858585);
+  border: 1px solid var(--mkui-border, #555);
+  border-radius: 3px;
+  padding: 0 0.35em;
+}
+
+.task-refs-kind-task { color: #4ec9b0; border-color: #4ec9b0; }
+.task-refs-kind-file { color: #dcdcaa; border-color: #dcdcaa; }
+
+.task-refs-relation {
+  color: var(--mkui-fg-mute, #858585);
+  font-style: italic;
+}
+
+.task-refs-taskid {
+  font-family: var(--mkui-mono, monospace);
+}
+
+.task-refs-label {
+  overflow-wrap: anywhere;
+}
+
+.task-refs-goto {
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.85em;
+  padding: 0.1em 0.6em;
+  cursor: pointer;
+}
+
+.task-refs-body {
+  margin: 0.4em 0 0;
+  padding: 0.5em;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  background: var(--mkui-bg-alt, rgba(255, 255, 255, 0.04));
+  border-radius: 3px;
+}
+
+.task-refs-href {
+  margin-top: 0.3em;
+  font-size: 0.85em;
+  color: var(--mkui-fg-mute, #858585);
+  overflow-wrap: anywhere;
+}
+
+.task-refs-image-link {
+  display: block;
+  margin-top: 0.4em;
+}
+
+.task-refs-image {
+  max-width: 100%;
+  max-height: 50vh;
+  border-radius: 3px;
+}
+
+.task-refs-empty {
+  color: var(--mkui-fg-mute, #858585);
+  font-style: italic;
+}

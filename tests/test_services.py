@@ -1,8 +1,10 @@
-"""Unit tests for Task ID formatting and the user prefix (no server)."""
+"""Unit tests for Task ID formatting, the user prefix, and reference defaults (no server)."""
 
 import pytest
 
-from mktask.services import TASK_ID_PATTERN, format_task_id, user_prefix
+from mktask.services import (
+    FILES_ROUTE, REF_KINDS, RELATIONS, TASK_ID_PATTERN, default_label, format_task_id, user_prefix,
+)
 
 
 @pytest.mark.parametrize("user, prefix", [
@@ -36,3 +38,29 @@ def test_format_task_id_pads_to_eight_and_never_wraps(number, expected):
 @pytest.mark.parametrize("bad", ["TKMA0000001", "tkma00000001", "TKM00000001", "TKMA0000000a", "TXMA00000001", ""])
 def test_pattern_rejects_malformed_ids(bad):
     assert not TASK_ID_PATTERN.match(bad)
+
+
+# ─── References ────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("kind, href, body, expected", [
+    ("url", "https://example.com/a?b=c", "", "https://example.com/a?b=c"),
+    ("file", "/files/3f9a.png", "", "3f9a.png"),
+    ("text", "Subject: hi\n\nbody", "", ""),                      # body, not href, feeds a snippet
+    ("text", "", "\n  \nSubject: hi\nbody", "Subject: hi"),       # first non-blank line, stripped
+    ("text", "", "x" * 100, "x" * 79 + "…"),                     # long lines are truncated
+    ("text", "", "   ", ""),
+    ("task", "TKMA00000002", "", ""),                            # a link's label is the linked title, set by the service
+])
+def test_default_label(kind, href, body, expected):
+    assert default_label(kind, href, body) == expected
+
+
+def test_relations_come_in_inverse_pairs():
+    for relation, inverse in RELATIONS.items():
+        assert RELATIONS[inverse] == relation, f"{relation} <-> {inverse} is not symmetric"
+    assert RELATIONS["relates"] == "relates"
+
+
+def test_reference_kinds():
+    assert REF_KINDS == ("url", "text", "file", "task")
+    assert FILES_ROUTE == "/files/"

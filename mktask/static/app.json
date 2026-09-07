@@ -9,24 +9,11 @@
       "background": "#858585",
       "color": "#000"
     },
-    "selected_task": null
+    "selected_task": null,
+    "selected_ref": null,
+    "linked_task": null
   },
   "menubar": [
-    {
-      "label": "Edit",
-      "items": [
-        {
-          "label": "Copy",
-          "action": "edit.copy",
-          "shortcut": "mod+C"
-        },
-        {
-          "label": "Select All",
-          "action": "edit.selectAll",
-          "shortcut": "mod+A"
-        }
-      ]
-    },
     {
       "label": "Tasks",
       "items": [
@@ -39,6 +26,16 @@
           "label": "Detail",
           "action": "pane.show",
           "args": "task-detail"
+        },
+        {
+          "label": "References",
+          "action": "pane.show",
+          "args": "references"
+        },
+        {
+          "label": "Linked Task",
+          "action": "pane.show",
+          "args": "linked-task"
         },
         {
           "sep": true
@@ -84,6 +81,21 @@
           "args": {
             "pane": "tasks"
           }
+        }
+      ]
+    },
+    {
+      "label": "Edit",
+      "items": [
+        {
+          "label": "Copy",
+          "action": "edit.copy",
+          "shortcut": "mod+C"
+        },
+        {
+          "label": "Select All",
+          "action": "edit.selectAll",
+          "shortcut": "mod+A"
         }
       ]
     },
@@ -581,6 +593,148 @@
           }
         },
         {
+          "label": "Reference",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Add Reference to Task ID ${row.task_id}",
+              "modal": true,
+              "width": 440,
+              "fields": [
+                {
+                  "name": "task_id",
+                  "type": "hidden",
+                  "value": "${row.task_id}"
+                },
+                {
+                  "label": "Task",
+                  "type": "readonly",
+                  "value": "${row.title}"
+                },
+                {
+                  "name": "kind",
+                  "label": "Kind",
+                  "type": "select",
+                  "value": "url",
+                  "options": [
+                    {
+                      "value": "url",
+                      "label": "URL"
+                    },
+                    {
+                      "value": "text",
+                      "label": "Text snippet"
+                    }
+                  ]
+                },
+                {
+                  "name": "href",
+                  "label": "URL",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "https://…, mailto:…",
+                  "showWhen": "kind == 'url'"
+                },
+                {
+                  "name": "body",
+                  "label": "Text",
+                  "type": "textarea",
+                  "required": true,
+                  "placeholder": "Paste the email or conversation here",
+                  "showWhen": "kind == 'text'"
+                },
+                {
+                  "name": "label",
+                  "label": "Label (optional)",
+                  "type": "text",
+                  "value": "",
+                  "placeholder": "Defaults to the URL or the first line"
+                }
+              ],
+              "submit": {
+                "label": "Add",
+                "service": "tasks",
+                "op": "add_ref"
+              }
+            }
+          }
+        },
+        {
+          "label": "Link",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Link Task ID ${row.task_id}",
+              "modal": true,
+              "width": 440,
+              "fields": [
+                {
+                  "name": "task_id",
+                  "type": "hidden",
+                  "value": "${row.task_id}"
+                },
+                {
+                  "name": "kind",
+                  "type": "hidden",
+                  "value": "task"
+                },
+                {
+                  "label": "This task",
+                  "type": "readonly",
+                  "value": "${row.title}"
+                },
+                {
+                  "name": "relation",
+                  "label": "Relation",
+                  "type": "select",
+                  "value": "blocks",
+                  "options": [
+                    {
+                      "value": "blocks",
+                      "label": "blocks"
+                    },
+                    {
+                      "value": "blocked_by",
+                      "label": "is blocked by"
+                    },
+                    {
+                      "value": "relates",
+                      "label": "relates to"
+                    }
+                  ]
+                },
+                {
+                  "name": "href",
+                  "label": "Task",
+                  "type": "select",
+                  "required": true,
+                  "optionsFrom": {
+                    "service": "task_options",
+                    "params": {
+                      "task_id": "${row.task_id}"
+                    },
+                    "value": "value",
+                    "label": "label"
+                  }
+                }
+              ],
+              "submit": {
+                "label": "Link",
+                "service": "tasks",
+                "op": "add_ref"
+              }
+            }
+          }
+        },
+        {
           "label": "Complete",
           "enable": {
             "connected": true,
@@ -673,6 +827,187 @@
           "type": "text",
           "text": "${IF(state.selected_task == NULL, '', state.selected_task.notes)}",
           "class": "task-detail-notes"
+        },
+        {
+          "type": "task-refs",
+          "class": "task-detail-refs"
+        }
+      ]
+    },
+    "references": {
+      "title": "References",
+      "type": "mkio-table",
+      "service": "task_refs",
+      "protocol": "query",
+      "columns": [
+        "task_id",
+        "kind",
+        "relation",
+        "label",
+        "created_at"
+      ],
+      "labels": {
+        "task_id": "Task ID",
+        "kind": "Kind",
+        "relation": "Relation",
+        "label": "Reference",
+        "created_at": "Added"
+      },
+      "display": {
+        "label": "${IF(kind == 'task', CONCAT(href, '  ', label), IF(href == '', label, LINK(label, href)))}",
+        "relation": "${IF(relation == 'blocks', 'blocks', IF(relation == 'blocked_by', 'blocked by', IF(relation == 'relates', 'relates to', '')))}"
+      },
+      "types": {
+        "created_at": {
+          "type": "time",
+          "parse": "%Y-%m-%d %H:%M:%S"
+        }
+      },
+      "sort": [
+        "-created_at"
+      ],
+      "styles": {
+        "kind": [
+          {
+            "when": "value == 'task'",
+            "color": "#4ec9b0"
+          },
+          {
+            "when": "value == 'file'",
+            "color": "#dcdcaa"
+          },
+          {
+            "color": "#858585"
+          }
+        ]
+      },
+      "select": {
+        "state": "selected_ref"
+      },
+      "buttons": [
+        {
+          "label": "Edit",
+          "unit": "row",
+          "enable": {
+            "connected": true,
+            "when": "row != NULL && row.kind != 'task'"
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Edit Reference",
+              "modal": true,
+              "width": 440,
+              "fields": [
+                {
+                  "name": "ref_id",
+                  "type": "hidden",
+                  "value": "${row.ref_id}"
+                },
+                {
+                  "name": "updated_at",
+                  "type": "hidden",
+                  "value": "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+                },
+                {
+                  "label": "Task ID",
+                  "type": "readonly",
+                  "value": "${row.task_id}"
+                },
+                {
+                  "name": "label",
+                  "label": "Label",
+                  "type": "text",
+                  "value": "${row.label}"
+                },
+                {
+                  "name": "href",
+                  "label": "URL",
+                  "type": "text",
+                  "required": true,
+                  "value": "${row.href}",
+                  "showWhen": "row.kind == 'url'"
+                },
+                {
+                  "name": "body",
+                  "label": "Text",
+                  "type": "textarea",
+                  "required": true,
+                  "value": "${row.body}",
+                  "showWhen": "row.kind == 'text'"
+                }
+              ],
+              "submit": {
+                "label": "Save",
+                "service": "tasks",
+                "op": "edit_ref"
+              }
+            }
+          }
+        },
+        {
+          "label": "Delete",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "style": [
+            {
+              "when": "enabled",
+              "background": "#c62828",
+              "color": "#fff"
+            }
+          ],
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Delete Reference",
+              "modal": true,
+              "width": 380,
+              "fields": [
+                {
+                  "name": "ref_id",
+                  "type": "hidden",
+                  "value": "${row.ref_id}"
+                },
+                {
+                  "label": "Remove this reference from Task ID ${row.task_id}? A task link is removed from both tasks.",
+                  "type": "readonly",
+                  "value": "${row.label}"
+                }
+              ],
+              "submit": {
+                "label": "Delete",
+                "service": "tasks",
+                "op": "delete_ref"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "linked-task": {
+      "title": "Linked Task",
+      "widgets": [
+        {
+          "type": "text",
+          "text": "${IF(state.linked_task == NULL, 'Follow a task link from the Detail pane to open a task here.', FORMAT('{}  {}', state.linked_task.task_id, state.linked_task.title))}",
+          "class": "task-detail-title"
+        },
+        {
+          "type": "text",
+          "text": "${IF(state.linked_task == NULL, '', CONCAT(TITLE(state.linked_task.status), IF(state.linked_task.parent_task_id == '', '', CONCAT(' · Split from Task ID ', state.linked_task.parent_task_id))))}",
+          "class": "task-detail-parent"
+        },
+        {
+          "type": "text",
+          "text": "${IF(state.linked_task == NULL, '', state.linked_task.notes)}",
+          "class": "task-detail-notes"
+        },
+        {
+          "type": "task-refs",
+          "mode": "linked",
+          "class": "task-detail-refs"
         }
       ]
     }
@@ -685,10 +1020,27 @@
       "w": 0.64,
       "h": 0.94,
       "layout": {
-        "type": "tabs",
-        "active": 0,
+        "type": "split",
+        "dir": "v",
+        "ratios": [
+          0.65,
+          0.35
+        ],
         "children": [
-          "tasks"
+          {
+            "type": "tabs",
+            "active": 0,
+            "children": [
+              "tasks"
+            ]
+          },
+          {
+            "type": "tabs",
+            "active": 0,
+            "children": [
+              "references"
+            ]
+          }
         ]
       }
     },
