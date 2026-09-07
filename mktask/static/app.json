@@ -808,7 +808,13 @@
             }
           }
         }
-      ]
+      ],
+      "link": {
+        "broadcast": {
+          "task_id": "task_id"
+        },
+        "chips": false
+      }
     },
     "task-detail": {
       "title": "Detail",
@@ -984,7 +990,13 @@
             }
           }
         }
-      ]
+      ],
+      "link": {
+        "listen": {
+          "task_id": "task_id"
+        },
+        "chips": false
+      }
     },
     "linked-task": {
       "title": "Linked Task",

@@ -8,11 +8,9 @@
 //   { type: "task-refs" }                  (Detail pane)
 //     A drop box for `state.selected_task` — drop or paste a file, paste a
 //     URL or some text, or click to choose a file — and a preview of
-//     `state.selected_ref`, the row selected in the References pane. It
-//     also keeps the References pane on the selected task: mkui has no
-//     state-bound filter, so the widget fires `table.filter` (the action
-//     the Tasks menu uses) with the selected Task ID on every change, and
-//     clears that column's filter when nothing is selected.
+//     `state.selected_ref`, the row selected in the References pane. (The
+//     References pane follows the Tasks selection through mkui's table
+//     linking — `link.broadcast` / `link.listen` in app.json — not here.)
 //
 //   { type: "task-refs", mode: "linked" }  (Linked Task pane)
 //     The references of `state.linked_task`, fetched once per task through
@@ -213,11 +211,6 @@ registerWidget("task-refs", (spec, app, host) => {
   });
 
   app.state.subscribe("selected_task", (task) => {
-    app.fireAction("table.filter", {
-      pane: spec.referencesPane ?? "references",
-      filters: { task_id: task ? [task.task_id] : null },
-      merge: true,
-    });
     box.classList.toggle("task-refs-dropbox-disabled", !task);
     boxText.textContent = task
       ? `Drop, paste, or click to add a file, URL, or snippet to ${task.task_id}`

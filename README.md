@@ -33,8 +33,8 @@ PDF), or a **link to another task** with a relation (*blocks*, *blocked by*,
 with the Link button, or select a task and drop, paste, or pick a file in
 the Detail pane: an image pastes straight from the clipboard, a pasted URL
 becomes a URL reference, pasted text a snippet. The References pane follows
-the selected task (clear the selection to see every reference), with URLs
-and files as links; selecting a reference previews it in the Detail pane,
+the selected tasks (mkui table linking; clear the selection to see every
+reference), with URLs and files as links; selecting a reference previews it in the Detail pane,
 an image inline. A task link shows on both tasks,
 worded from each side, and *Go to* opens the linked task, with its own
 references, in a Linked Task window. Uploaded files live beside the
@@ -96,7 +96,7 @@ Until 1.0, a release may change the database schema without migrating an
 older database. 0.2.0 did (Task IDs, splitting, and `complete` replacing
 `done`): delete a 0.1.0 `mktask.db` before starting a newer version. 0.3.0
 only adds the `task_refs` table, which `auto_migrate` creates in an existing
-database, so a 0.2.0 database carries over as is.
+database, so a 0.2.0 database carries over as is. 0.3.1 changes no schema.
 
 ## Development
 

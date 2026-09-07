@@ -21,7 +21,8 @@ Delete button were exercised in a browser.
 
 **Status (2026-09-06):** Phase 7 (references, task links, file uploads, the
 References pane following the selection) shipped as v0.3.0: 168 tests pass
-and every flow was exercised in a browser.
+and every flow was exercised in a browser. v0.3.1 (2026-09-07) moved the
+selection follow onto mkui 0.2.19's table linking.
 
 ## Target layout
 
@@ -308,13 +309,11 @@ task*.
 
 ### Deferred from phase 7
 
-- **mkui**: a state-bound table filter (`filters.task_id =
-  "${state.selected_task.task_id}"`, re-applied on change) would let the
-  References pane follow the selection from JSON alone; today `refs.js`
-  fires `table.filter` on each selection change, which works but lives in
-  the widget. A `_select` hook and `table.select` action so "Go to" can
+- **mkui**: a `_select` hook and `table.select` action so "Go to" can
   move the Tasks selection; a `file` dialog field type so the drop box
-  could retire.
+  could retire. (Table linking landed in mkui 0.2.17–0.2.19 and replaced
+  the widget's `table.filter` workaround: `link.broadcast` on Tasks,
+  `link.listen` on References, `chips = false` on both.)
 - **Prioritization hook**: `blocked_by` an open task should lower the
   blocked task's score. The mirrored rows make "is this task blocked" one
   filtered read.

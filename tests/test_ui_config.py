@@ -261,8 +261,7 @@ def test_task_refs_widget_state_and_services(app_config, server_config):
         assert op in server_config["services"]["tasks"]["ops"], op
     assert 'fireAction("pane.show"' in js
     assert '"linked-task"' in js and "linked-task" in app_config["panes"]
-    assert 'fireAction("table.filter"' in js and '"references"' in js, "the References pane follows the selection"
-    assert "references" in app_config["panes"]
+    assert "table.filter" not in js, "the References pane follows the selection through mkui's table linking"
     assert 'const UPLOAD_URL = "/files"' in js
     modes = {w.get("mode") for p in app_config["panes"].values() for w in p.get("widgets", []) if w["type"] == "task-refs"}
     assert modes == {None, "linked"}, "one drop box in Detail, one viewer in Linked Task"
@@ -476,6 +475,23 @@ def test_reference_kinds_and_relations_match_the_service(server_config):
     assert add_ref["defaults"]["kind"] == "url"
     assert "task_refs" in server_config["tables"]
     assert set(server_config["services"]["task_refs"]["filterable"]) == {"task_id", "kind", "relation"}
+
+
+def test_references_follow_the_tasks_selection_by_link(app_config, server_config):
+    """mkui table linking (≥ 0.2.19): Tasks broadcasts its Task ID under a name,
+    References filters its own task_id column by it, with the toolbar chips off
+    since the link is part of the setup, not something to fiddle with."""
+    tasks, refs = app_config["panes"]["tasks"], app_config["panes"]["references"]
+    assert tasks["link"] == {"broadcast": {"task_id": "task_id"}, "chips": False}
+    assert refs["link"] == {"listen": {"task_id": "task_id"}, "chips": False}
+    for name, col in tasks["link"]["broadcast"].items():
+        assert col in _columns_of(tasks, server_config)
+        listened = refs["link"]["listen"][name]
+        listened = listened["column"] if isinstance(listened, dict) else listened
+        assert listened in _columns_of(refs, server_config)
+    assert "task_id" not in refs.get("filters", {}), "the link supplies the filter"
+    import mkui
+    assert tuple(int(x) for x in mkui.__version__.split(".")[:3]) >= (0, 2, 19)
 
 
 def test_main_frame_stacks_tasks_over_references(app_config):
