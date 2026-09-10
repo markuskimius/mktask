@@ -25,6 +25,26 @@ writes and adds what a config cannot express:
   a link. `edit_ref` refuses a task link (its label follows the linked
   task) and keeps a file's href. `edit` on a task relabels every link that
   points at it.
+- Every op also writes the narrative to `task_events`: what happened, to
+  which task, in the same transaction as the change itself.
+
+`tasks` and `task_refs` are `versioned = true`, so mkio records every
+version of every row and its `undo`/`redo` ops step one row along its own
+chain. That leaves two things to an application:
+
+- `undo_action` / `redo_action` step *every row one user action wrote*, not
+  just the one the user has selected. mkio stamps each row it writes with
+  the transaction's `_mkio_ref`, so the group is a lookup, not bookkeeping:
+  a link's two mirrored rows, a subtree completion and a move with its
+  reopened ancestors all step together, under three guards.
+- `undo_redo_hook` is what mkio's `on_undo_redo` calls after a cursor
+  moves. It writes the `undone` / `redone` event and re-labels any link
+  left pointing at a stale title, which a cursor move would otherwise
+  bypass — `_op_edit` is not on that path.
+
+A task delete stays outside all of it: mkio drops a deleted row's history
+with the row, so a delete is permanent. `_op_delete` makes that thorough,
+taking the subtree's events and any undone reference chain with it.
 """
 
 from __future__ import annotations
@@ -47,6 +67,13 @@ COUNTER_NAME = "task"
 _MIN_DIGITS = 8
 
 REF_KINDS = ("url", "text", "file", "task")
+#: The versioned tables, each with its key column and its cursor-move ops.
+#: mkio records every version of these in `<table>__history`; everything
+#: undo/redo does is driven off this map.
+_VERSIONED = {
+    "tasks": ("task_id", "undo_task", "redo_task"),
+    "task_refs": ("ref_id", "undo_ref", "redo_ref"),
+}
 TOP_LEVEL = "__top__"  # the Move picker's "top level"; see move_options in mktask.toml
 SEED_RELATIONS = Path(__file__).with_name("relations.json")  # what a new database starts with
 FILES_ROUTE = "/files/"
@@ -67,6 +94,52 @@ def format_task_id(prefix: str, number: int) -> str:
     return f"TK{prefix}{number:0{_MIN_DIGITS}d}"
 
 
+#: `moved` records where the task went; this is what it records for the top
+#: level, which has no Task ID to name.
+TOP_LEVEL_DETAIL = "top level"
+
+#: What adding a reference is called, by kind. The point of `last_event` is
+#: to read as a sentence in the blotter, so a file is "attached" and a task
+#: is "linked" rather than both being "a reference added".
+_REF_ADDED = {
+    "file": "Attached a file", "url": "Added a URL",
+    "text": "Added a snippet", "task": "Linked",
+}
+
+
+def event_phrase(action: str, detail: str = "", kind: str = "") -> str:
+    """The one line a task's Last Event shows for an event.
+
+    The same phrase goes into `tasks.last_event` and, because `tasks` is
+    versioned, into every recorded version — so a task's history says what
+    each version was *about*, which `_mkio_op` ("insert", "update") cannot.
+    """
+    def named(head: str) -> str:
+        return f"{head}: {detail}" if detail else head
+
+    if action == "created":
+        return "Created"
+    if action == "split_from":
+        return f"Split from {detail}" if detail else "Split from another task"
+    if action == "split_to":
+        return f"Split into {detail}" if detail else "Split into a new task"
+    if action == "edited":
+        return "Edited"
+    if action == "moved":
+        return "Moved to the top level" if detail in ("", TOP_LEVEL_DETAIL) else f"Moved under {detail}"
+    if action == "completed":
+        return "Completed"
+    if action == "reopened":
+        return "Reopened"
+    if action == "ref_added":
+        return named(_REF_ADDED.get(kind, "Added a reference"))
+    if action == "ref_edited":
+        return named("Edited a reference")
+    if action == "ref_deleted":
+        return named("Removed a reference")
+    return named(action.replace("_", " ").capitalize())
+
+
 def default_label(kind: str, href: str, body: str) -> str:
     """The label a reference shows when the client sent none."""
     if kind == "url":
@@ -82,14 +155,17 @@ def default_label(kind: str, href: str, body: str) -> str:
 class TaskTransactions(TransactionService):
     """mkio transaction service for `tasks` with Task IDs, cascades, and references."""
 
+    NEW_OPS = ("add", "split")
     CASCADE_OPS = ("complete", "reopen", "delete")
     TREE_OPS = ("edit", "move")
     REF_OPS = ("add_ref", "edit_ref", "delete_ref")
     RELATION_OPS = ("add_relation", "edit_relation", "delete_relation")
+    STEP_OPS = ("undo_action", "redo_action")
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.prefix = self.config.get("prefix") or user_prefix(getpass.getuser())
+        self.user = self.config.get("user") or getpass.getuser()
         files_dir = self.config.get("files_dir")
         self.files_dir = Path(files_dir) if files_dir else None
         self._last = 0
@@ -121,16 +197,17 @@ class TaskTransactions(TransactionService):
         if msg.get("type") == "check" or not isinstance(data, dict):
             return await super().on_message(ws, msg)
 
-        if op in ("add", "split"):
+        if op in self.NEW_OPS:
             if data.get("task_id"):
                 return await self._error(ws, msg, "Task ID is assigned by the server")
             if op == "split" and not await self._exists(data.get("parent_task_id")):
                 return await self._error(ws, msg, f"Cannot split: no task {data.get('parent_task_id')!r}")
             task_id, number = self.next_task_id()
             data = {**data, "task_id": task_id, "last": number}
-            return await super().on_message(ws, {**msg, "data": data})
+            return await self._guarded(ws, {**msg, "data": data}, op, data)
 
-        if op in self.CASCADE_OPS or op in self.REF_OPS or op in self.RELATION_OPS or op in self.TREE_OPS:
+        if (op in self.CASCADE_OPS or op in self.REF_OPS or op in self.RELATION_OPS
+                or op in self.TREE_OPS or op in self.STEP_OPS):
             return await self._guarded(ws, msg, op, data)
 
         return await super().on_message(ws, msg)
@@ -159,60 +236,219 @@ class TaskTransactions(TransactionService):
         params = tuple(_extract_params(step, row) for row in rows for step in compiled)
         return ops, params
 
-    async def _submit(self, op: str, rows: list[dict[str, Any]], data: dict[str, Any], ref: str | None) -> dict[str, Any]:
-        """One transaction over every row. Right for inserts and updates, whose
-        RETURNING rows are what the change bus announces."""
-        ops, params = self._steps(op, rows)
-        return await self.writer.submit(ops, params, data, ref=ref)
+    def _event(
+        self, task_id: str, action: str, detail: Any = "", ref_id: Any = 0, kind: str = "",
+    ) -> dict[str, Any]:
+        """One `task_events` row: what happened, to which task.
 
-    async def _submit_each(self, op: str, rows: list[dict[str, Any]], ref: str | None) -> dict[str, Any]:
+        It carries `last_event` too — the same event as one readable line.
+        `add_event` ignores the extra key (mkio takes only a step's declared
+        fields), and `touch` takes the row as it stands, so an event and the
+        Last Event it sets are never written from two different places.
+        """
+        return {
+            "task_id": task_id, "action": action, "detail": str(detail or ""),
+            "ref_id": int(ref_id or 0), "actor": self.user,
+            "last_event": event_phrase(action, str(detail or ""), kind),
+        }
+
+    def _event_steps(self, events: Any) -> tuple[tuple, tuple]:
+        """The `add_event` steps for a list of `_event` rows."""
+        rows = list(events)
+        return self._steps("add_event", rows) if rows else ((), ())
+
+    def _touch_steps(self, events: Any, wrote: Any) -> tuple[tuple, tuple]:
+        """Steps setting Last Event on the tasks this op does not itself write.
+
+        An op that writes the task row carries `last_event` as one of its own
+        fields — a second update in the same transaction would record a
+        second version of the task. `wrote` names those, so what is left is
+        the tasks a reference change concerns: the owner, and both ends of a
+        link. Touching them is what puts a reference event in the task's
+        recorded history. One touch per task, the last event winning.
+        """
+        pending = {e["task_id"]: e for e in events if e["task_id"] not in wrote}
+        return self._steps("touch", list(pending.values())) if pending else ((), ())
+
+    async def _submit(
+        self, op: str, rows: list[dict[str, Any]], data: dict[str, Any], ref: str | None,
+        events: Any = (), wrote: Any = (),
+    ) -> dict[str, Any]:
+        """One transaction over every row, plus its narrative. Right for
+        inserts and updates, whose RETURNING rows are what the change bus
+        announces."""
+        ops, params = self._steps(op, rows)
+        e_ops, e_params = self._event_steps(events)
+        t_ops, t_params = self._touch_steps(events, wrote)
+        return await self.writer.submit(
+            ops + t_ops + e_ops, params + t_params + e_params, data, ref=ref
+        )
+
+    async def _submit_each(
+        self, op: str, rows: list[dict[str, Any]], ref: str | None, events: Any = (),
+        wrote: Any = (),
+    ) -> dict[str, Any]:
         """One request per row, queued together so they land in one batch.
         Right for deletes: the writer announces a delete with the request's
-        data, so each row needs its own request to be announced by its key."""
-        results = await asyncio.gather(*(
-            self.writer.submit(*self._steps(op, [row]), row, ref=ref) for row in rows
-        ))
+        data, so each row needs its own request to be announced by its key.
+
+        The events ride on the first request — one batch, one commit, and
+        which request carries them makes no difference to what lands.
+        """
+        e_ops, e_params = self._event_steps(events)
+        t_ops, t_params = self._touch_steps(events, wrote)
+        e_ops, e_params = t_ops + e_ops, t_params + e_params
+        if not rows:
+            if not e_ops:
+                return {"ok": True}
+            return await self.writer.submit(e_ops, e_params, {}, ref=ref)
+        submits = []
+        for i, row in enumerate(rows):
+            ops, params = self._steps(op, [row])
+            if i == 0:
+                ops, params = ops + e_ops, params + e_params
+            submits.append(self.writer.submit(ops, params, row, ref=ref))
+        results = await asyncio.gather(*submits)
         return results[-1] if results else {"ok": True}
 
     # ── Task cascades ────────────────────────────────────────────────
 
+    def _rows_for(self, events: list[dict[str, Any]], base: dict[str, Any]) -> list[dict[str, Any]]:
+        """One row per event, carrying that task's key and its Last Event.
+
+        The op writes the task row itself, so `last_event` rides along as one
+        of its fields rather than as a separate touch — which would record a
+        second version of the same task in the same transaction.
+        """
+        return [{**base, "task_id": e["task_id"], "last_event": e["last_event"]} for e in events]
+
+    async def _op_add(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        events = [self._event(data["task_id"], "created", data.get("title", ""))]
+        return await self._submit(
+            "add", self._rows_for(events, data), data, ref,
+            events=events, wrote={data["task_id"]},
+        )
+
+    async def _op_split(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        """The new task records where it came from; the parent, what came of it.
+
+        The parent's row is not otherwise written, so its half is a touch —
+        which is how a split shows up in the parent's own history too.
+        """
+        task_id, parent = data["task_id"], data["parent_task_id"]
+        events = [
+            self._event(task_id, "split_from", parent),
+            self._event(parent, "split_to", data.get("title", "")),
+        ]
+        return await self._submit(
+            "split", self._rows_for(events[:1], data), data, ref,
+            events=events, wrote={task_id},
+        )
+
     async def _op_complete(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
         keys = await self._subtree(data["task_id"], status="open") or [data["task_id"]]
-        return await self._submit("complete", [{**data, "task_id": k} for k in keys], data, ref)
+        events = [self._event(k, "completed") for k in keys]
+        return await self._submit(
+            "complete", self._rows_for(events, data), data, ref,
+            events=events, wrote=set(keys),
+        )
 
     async def _op_reopen(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
         keys = await self._ancestors_and_self(data["task_id"], status="complete") or [data["task_id"]]
-        return await self._submit("reopen", [{**data, "task_id": k} for k in keys], data, ref)
+        events = [self._event(k, "reopened") for k in keys]
+        return await self._submit(
+            "reopen", self._rows_for(events, data), data, ref,
+            events=events, wrote=set(keys),
+        )
 
     async def _op_delete(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        """Delete the task, everything split from it, and every trace of both.
+
+        Permanent, and the one thing in mktask that is: mkio drops a
+        versioned row's history when the row is deleted, so there is nothing
+        left to step back onto. That is the whole reason this goes to some
+        length — a half-deleted task would leave a snippet's text, or a
+        file, reachable through history for a task that no longer exists.
+
+        It takes, in order: any reference of the subtree left as history by
+        an undo (resurrected first, so deleting it drops its chain the same
+        way), every reference the subtree owns *or that points at it* from a
+        surviving task, the tasks themselves, and the subtree's events. The
+        files go last, once nothing names them.
+        """
         keys = await self._subtree(data["task_id"], status=None) or [data["task_id"]]
         marks = ", ".join("?" for _ in keys)
-        refs = await self.db.read(
-            f"SELECT ref_id, kind, href FROM task_refs "
-            f"WHERE task_id IN ({marks}) OR (kind = 'task' AND href IN ({marks}))",
+        scope = (
+            f"task_id IN ({marks}) OR (kind = 'task' AND href IN ({marks}))"
+        )  # the same reach for the live rows and for the recorded versions
+
+        # A reference undone but not redone has no row, only a chain. Step it
+        # forward so it is a row again: mkio rebuilds version 1 from history,
+        # and the delete below then drops the whole chain with it.
+        undone = await self.db.read(
+            f"SELECT DISTINCT ref_id FROM task_refs__history h WHERE ({scope}) "
+            f"AND NOT EXISTS (SELECT 1 FROM task_refs r WHERE r.ref_id = h.ref_id)",
             (*keys, *keys),
         )
+        if undone:
+            await self._submit_each("redo_ref", [{"ref_id": r["ref_id"]} for r in undone], ref)
+
+        refs = await self.db.read(
+            f"SELECT ref_id, task_id, kind, href, label FROM task_refs WHERE {scope}",
+            (*keys, *keys),
+        )
+        gone = set(keys)
         if refs:
-            await self._submit_each("delete_ref", [{"ref_id": r["ref_id"]} for r in refs], ref)
+            # A link removed from a task that survives is a change to that
+            # task; one removed from a task being deleted is not worth saying.
+            await self._submit_each(
+                "delete_ref", [{"ref_id": r["ref_id"]} for r in refs], ref,
+                events=[
+                    self._event(r["task_id"], "ref_deleted", r["label"], r["ref_id"], kind=r["kind"])
+                    for r in refs if r["task_id"] not in gone
+                ],
+            )
         result = await self._submit_each("delete", [{**data, "task_id": k} for k in keys], ref)
+
+        events = await self.db.read(
+            f"SELECT event_id FROM task_events WHERE task_id IN ({marks})", tuple(keys)
+        )
+        if events:
+            await self._submit_each("delete_event", [{"event_id": e["event_id"]} for e in events], ref)
         await self._unlink_orphans(r["href"] for r in refs if r["kind"] == "file")
         return result
 
     async def _op_edit(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
         """A plain update, plus a relabel of every link that points at this task."""
+        event = self._event(data["task_id"], "edited", data.get("title", ""))
         compiled = self._resolve_ops({"op": "edit"})
         ops = list(compiled)
-        params = [_extract_params(step, data) for step in compiled]
+        params = [_extract_params(step, {**data, "last_event": event["last_event"]})
+                  for step in compiled]
         if "title" in data:
-            links = await self.db.read(
-                "SELECT ref_id FROM task_refs WHERE kind = 'task' AND href = ?", (data["task_id"],)
-            )
-            r_ops, r_params = self._steps("relabel_ref", [
-                {"ref_id": r["ref_id"], "label": data["title"]} for r in links
-            ])
+            r_ops, r_params = await self._relabel_steps(data["task_id"], data["title"])
             ops.extend(r_ops)
             params.extend(r_params)
-        return await self.writer.submit(tuple(ops), tuple(params), data, ref=ref)
+        e_ops, e_params = self._event_steps([event])
+        return await self.writer.submit(
+            tuple(ops) + e_ops, tuple(params) + e_params, data, ref=ref
+        )
+
+    async def _relabel_steps(self, task_id: str, title: str) -> tuple[tuple, tuple]:
+        """Steps setting every link that points at `task_id` to its new title.
+
+        Only the rows that disagree: a relabel is an ordinary write on a
+        versioned table, so a no-op one would still spend a version and
+        discard that reference's redo branch. It also makes the operation
+        idempotent, which is what lets the undo/redo hook re-run it blindly.
+        """
+        links = await self.db.read(
+            "SELECT ref_id FROM task_refs WHERE kind = 'task' AND href = ? AND label != ?",
+            (task_id, title),
+        )
+        return self._steps("relabel_ref", [
+            {"ref_id": r["ref_id"], "label": title} for r in links
+        ]) if links else ((), ())
 
     async def _op_move(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
         """Re-parent one task; every task split from it comes along.
@@ -244,14 +480,23 @@ class TaskTransactions(TransactionService):
                 # rule `reopen` keeps when a child is reopened.
                 reopen = await self._ancestors_and_self(parent, status="complete")
 
+        moved = self._event(task_id, "moved", parent or TOP_LEVEL_DETAIL)
         compiled = self._resolve_ops({"op": "move"})
         ops = list(compiled)
-        params = [_extract_params(step, {**data, "parent_task_id": parent}) for step in compiled]
+        params = [_extract_params(
+            step, {**data, "parent_task_id": parent, "last_event": moved["last_event"]}
+        ) for step in compiled]
+        events = [moved]
         if reopen:
-            r_ops, r_params = self._steps("reopen", [{**data, "task_id": k} for k in reopen])
+            reopened = [self._event(k, "reopened") for k in reopen]
+            r_ops, r_params = self._steps("reopen", self._rows_for(reopened, data))
             ops.extend(r_ops)
             params.extend(r_params)
-        return await self.writer.submit(tuple(ops), tuple(params), data, ref=ref)
+            events.extend(reopened)
+        e_ops, e_params = self._event_steps(events)
+        return await self.writer.submit(
+            tuple(ops) + e_ops, tuple(params) + e_params, data, ref=ref
+        )
 
     async def _check_no_links_merge(self, moved: list[str], parent: str) -> None:
         """Refuse a move that would leave a task link inside one tree.
@@ -278,6 +523,200 @@ class TaskTransactions(TransactionService):
         raise ValueError(
             f"Cannot move: {r['task_id']} {r['relation']} {r['href']} ({n} link{s}). Unlink first."
         )
+
+    # ── Undo and redo, by user action ─────────────────────────────────
+
+    async def _op_undo_action(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        return await self._step_action("undo", data, ref)
+
+    async def _op_redo_action(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        return await self._step_action("redo", data, ref)
+
+    def _subject(self, data: dict[str, Any]) -> tuple[str, str, Any]:
+        """The record a step was asked for: mkui sends its `history.key`.
+
+        A reference's key is checked first — the References pane's rows carry
+        a `task_id` too, and there "undo" means this reference, not its task.
+        """
+        if data.get("ref_id") not in (None, ""):
+            return "task_refs", "ref_id", data["ref_id"]
+        if data.get("task_id"):
+            return "tasks", "task_id", data["task_id"]
+        raise KeyError("'task_id'")
+
+    async def _step_action(self, direction: str, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        """Step every row one user action wrote, not just the one selected.
+
+        mkio's undo moves one row's cursor, but a mktask action is rarely
+        one row: a link is two mirrored rows, completing a task completes
+        its subtree, a move reopens the ancestors it lands under. Undoing
+        one row of those would leave the rest behind.
+
+        The group needs no bookkeeping of ours — mkio stamps every row a
+        transaction writes with that transaction's `_mkio_ref`, and indexes
+        it. So: find the ref that wrote the version this record is stepping
+        off, take every row that ref wrote, check the three ways a step
+        could leave the data wrong, and step them all.
+
+        The steps go one request per row, because mkio reads an undo's key
+        from the request's own data; they are queued together, so they land
+        in one batch and one commit.
+        """
+        table, key_col, key = self._subject(data)
+        group_ref = await self._group_ref(direction, table, key_col, key)
+        group = await self._group_rows(group_ref)
+        await self._check_step(direction, group)
+
+        submits = []
+        for tbl, rows in group.items():
+            col, op = _VERSIONED[tbl][0], _VERSIONED[tbl][1 if direction == "undo" else 2]
+            for row in rows:
+                one = {col: row[col]}
+                submits.append(self.writer.submit(*self._steps(op, [one]), one, ref=ref))
+        results = await asyncio.gather(*submits)
+        return {**(results[-1] if results else {"ok": True}), "stepped": sum(len(r) for r in group.values())}
+
+    async def _group_ref(self, direction: str, table: str, key_col: str, key: Any) -> str:
+        """The transaction ref of the action this record would step onto.
+
+        Undoing steps off the version the row is on; redoing steps onto the
+        one above it — and onto version 1 when there is no row at all, which
+        is where an undone-out-of-existence record comes back from.
+        """
+        hist = f"{table}__history"
+        if direction == "undo":
+            rows = await self.db.read(
+                f"SELECT _mkio_ref FROM {hist} WHERE {key_col} = ? AND _mkio_version = "
+                f"(SELECT _mkio_version FROM {table} WHERE {key_col} = ?)",
+                (key, key),
+            )
+            if not rows:
+                raise ValueError("Nothing to undo")
+        else:
+            rows = await self.db.read(
+                f"SELECT _mkio_ref FROM {hist} WHERE {key_col} = ? AND _mkio_version = "
+                f"COALESCE((SELECT _mkio_version FROM {table} WHERE {key_col} = ?), 0) + 1",
+                (key, key),
+            )
+            if not rows:
+                raise ValueError("Nothing to redo")
+        return rows[0]["_mkio_ref"]
+
+    async def _group_rows(self, group_ref: str) -> dict[str, list[dict[str, Any]]]:
+        """Every recorded version that transaction wrote, by table."""
+        out: dict[str, list[dict[str, Any]]] = {}
+        for table in _VERSIONED:
+            rows = await self.db.read(
+                f"SELECT * FROM {table}__history WHERE _mkio_ref = ? ORDER BY _mkio_version",
+                (group_ref,),
+            )
+            if rows:
+                out[table] = [dict(r) for r in rows]
+        return out
+
+    async def _check_step(self, direction: str, group: dict[str, list[dict[str, Any]]]) -> None:
+        """Refuse a step that would land on something other than what it left.
+
+        Three ways it could: the data moved on since (someone edited a row
+        the action wrote), the step would strand a child or a reference
+        under a task it is about to remove, or it would restore a row whose
+        parent or linked task is no longer there.
+        """
+        for table, rows in group.items():
+            key_col = _VERSIONED[table][0]
+            for row in rows:
+                key, version = row[key_col], row["_mkio_version"]
+                live = await self.db.read(
+                    f"SELECT _mkio_version FROM {table} WHERE {key_col} = ?", (key,)
+                )
+                at = live[0]["_mkio_version"] if live else 0
+                want = version if direction == "undo" else version - 1
+                if at != want:
+                    raise ValueError(
+                        f"Cannot {direction}: {key} has changed since (v{at}, expected v{want})"
+                    )
+                if direction == "undo" and version == 1:
+                    await self._check_removable(table, key)
+                else:
+                    dest = version - 1 if direction == "undo" else version
+                    await self._check_restorable(table, key, dest, row)
+
+    async def _check_removable(self, table: str, key: Any) -> None:
+        """An undo at version 1 removes the row: refuse to strand anything."""
+        if table != "tasks":
+            return
+        kids = await self.db.read(
+            "SELECT task_id FROM tasks WHERE parent_task_id = ? LIMIT 1", (key,)
+        )
+        if kids:
+            raise ValueError(f"Cannot undo: {key} still has {kids[0]['task_id']} split from it")
+        refs = await self.db.read("SELECT ref_id FROM task_refs WHERE task_id = ? LIMIT 1", (key,))
+        if refs:
+            raise ValueError(f"Cannot undo: {key} still has references")
+
+    async def _check_restorable(self, table: str, key: Any, version: int, row: dict[str, Any]) -> None:
+        """The version being stepped onto must still make sense.
+
+        A task's parent and a link's other end can have been deleted since
+        the version was recorded, and a delete is permanent — so the step
+        would restore a row pointing at nothing.
+        """
+        rows = await self.db.read(
+            f"SELECT * FROM {table}__history WHERE "
+            f"{_VERSIONED[table][0]} = ? AND _mkio_version = ?",
+            (key, version),
+        )
+        if not rows:
+            return
+        dest = dict(rows[0])
+        if table == "tasks":
+            parent = dest.get("parent_task_id") or ""
+            if parent and not await self._exists(parent):
+                raise ValueError(f"Cannot restore {key}: {parent} no longer exists")
+        elif dest.get("kind") == "task":
+            for end in (dest.get("task_id"), dest.get("href")):
+                if end and not await self._exists(end):
+                    raise ValueError(f"Cannot restore link: {end} no longer exists")
+
+    # ── What an undo left behind ──────────────────────────────────────
+
+    async def undo_redo_hook(self, event: Any) -> None:
+        """mkio's `on_undo_redo`: put right what the cursor move did not.
+
+        Moving a row's cursor restores the row, but not what followed from
+        the write it reverses. Two things followed here, and neither is on
+        the path a cursor move takes:
+
+        - A link shows the title of the task it points at, refreshed by
+          `_op_edit`. A step that changes a title leaves those stale.
+        - The narrative. `undone` / `redone` belong in it as much as the
+          write they reverse does.
+
+        Only a `tasks` step is narrated: a reference's own steps are its
+        version history's to tell, and narrating them here would put a
+        "redone" in a task's activity for the resurrection `_op_delete`
+        does on its way to deleting a reference for good.
+        """
+        if event.cause not in ("undo", "redo") or event.table != "tasks":
+            return
+        if event.new is None:
+            return  # undone out of existence: nothing left to narrate it against
+        old, new = event.old or {}, event.new
+        task_id = new.get("task_id") or old.get("task_id")
+        if not task_id:
+            return
+        title = new.get("title")
+        ops: tuple = ()
+        params: tuple = ()
+        if title is not None and title != old.get("title"):
+            # Idempotent, so running it after a group step that already
+            # carried the link rows along costs nothing.
+            ops, params = await self._relabel_steps(task_id, title)
+        e_ops, e_params = self._event_steps([
+            self._event(task_id, "undone" if event.cause == "undo" else "redone",
+                        title or old.get("title", "")),
+        ])
+        await self.writer.submit(ops + e_ops, params + e_params, {"task_id": task_id})
 
     # ── References ────────────────────────────────────────────────────
 
@@ -323,7 +762,13 @@ class TaskTransactions(TransactionService):
                 {**data, "task_id": href, "kind": kind, "relation": inverse,
                  "href": task_id, "label": task["title"], "body": "", "mime": ""},
             ]
-            return await self._submit("add_ref", rows, data, ref)
+            # A link is a change to both tasks, so both say so. The events
+            # name no ref_id: the row's is assigned by SQLite as it is
+            # inserted, and nothing hands it back within the transaction.
+            return await self._submit("add_ref", rows, data, ref, events=[
+                self._event(task_id, "ref_added", f"{relation} {href}", kind=kind),
+                self._event(href, "ref_added", f"{inverse} {task_id}", kind=kind),
+            ])
 
         if kind == "url" and not href:
             raise ValueError("A URL reference needs a URL")
@@ -333,7 +778,9 @@ class TaskTransactions(TransactionService):
             raise ValueError("A file reference must point under /files/")
         row = {**data, "kind": kind, "relation": "", "href": href if kind != "text" else "",
                "body": body if kind == "text" else "", "label": label or default_label(kind, href, body)}
-        return await self._submit("add_ref", [row], data, ref)
+        return await self._submit("add_ref", [row], data, ref, events=[
+            self._event(task_id, "ref_added", row["label"], kind=kind),
+        ])
 
     async def _op_edit_ref(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
         row = await self._ref(data["ref_id"])
@@ -348,9 +795,15 @@ class TaskTransactions(TransactionService):
                 raise ValueError(f"Unknown relation {relation!r}")
             mirror = await self._mirror(row)
             rows = [{**data, **row, "relation": relation, "updated_at": data.get("updated_at", row["updated_at"])}]
+            events = [self._event(row["task_id"], "ref_edited", f"{relation} {row['href']}",
+                                  row["ref_id"], kind=row["kind"])]
             if mirror:
                 rows.append({**mirror, "relation": inverse, "updated_at": data.get("updated_at", mirror["updated_at"])})
-            return await self._submit("edit_ref", rows, data, ref)
+                events.append(self._event(
+                    mirror["task_id"], "ref_edited", f"{inverse} {mirror['href']}",
+                    mirror["ref_id"], kind=mirror["kind"],
+                ))
+            return await self._submit("edit_ref", rows, data, ref, events=events)
         href = str(data.get("href") or "").strip()
         body = str(data.get("body") or "")
         if row["kind"] == "file":
@@ -360,16 +813,27 @@ class TaskTransactions(TransactionService):
         elif not href:
             raise ValueError("A URL reference needs a URL")
         label = str(data.get("label") or "").strip() or default_label(row["kind"], href, body)
-        return await self._submit("edit_ref", [{**data, "href": href, "body": body, "label": label, "relation": ""}], data, ref)
+        return await self._submit(
+            "edit_ref", [{**data, "href": href, "body": body, "label": label, "relation": ""}], data, ref,
+            events=[self._event(row["task_id"], "ref_edited", label, row["ref_id"], kind=row["kind"])],
+        )
 
     async def _op_delete_ref(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
         row = await self._ref(data["ref_id"])
         rows = [{"ref_id": data["ref_id"]}]
+        events = []
+        if row is not None:
+            events.append(self._event(row["task_id"], "ref_deleted", row["label"],
+                                      row["ref_id"], kind=row["kind"]))
         if row is not None and row["kind"] == "task":
             mirror = await self._mirror(row)
             if mirror:
                 rows.append({"ref_id": mirror["ref_id"]})
-        result = await self._submit_each("delete_ref", rows, ref)
+                events.append(self._event(
+                    mirror["task_id"], "ref_deleted", mirror["label"],
+                    mirror["ref_id"], kind=mirror["kind"],
+                ))
+        result = await self._submit_each("delete_ref", rows, ref, events=events)
         if row is not None and row["kind"] == "file":
             await self._unlink_orphans([row["href"]])
         return result
@@ -462,14 +926,25 @@ class TaskTransactions(TransactionService):
         return dict(rows[0]) if rows else None
 
     async def _unlink_orphans(self, hrefs: Any) -> None:
-        """Remove files under the files directory that no reference names any more."""
+        """Remove files under the files directory that nothing names any more.
+
+        Nothing means neither a live reference nor a recorded version of one:
+        an undone file reference is a chain with no row, and redoing it must
+        find its file still there. A delete is what empties both — mkio drops
+        a deleted row's history with it, and `_op_delete` takes the chains
+        an undo left behind — so a file outlives its last reference only for
+        as long as something could still bring that reference back.
+        """
         if self.files_dir is None:
             return
         for href in set(hrefs):
             if not href.startswith(FILES_ROUTE):
                 continue
             still = await self.db.read(
-                "SELECT 1 FROM task_refs WHERE kind = 'file' AND href = ?", (href,)
+                "SELECT 1 FROM task_refs WHERE kind = 'file' AND href = ? "
+                "UNION ALL "
+                "SELECT 1 FROM task_refs__history WHERE kind = 'file' AND href = ? LIMIT 1",
+                (href, href),
             )
             if still:
                 continue

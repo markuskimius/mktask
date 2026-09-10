@@ -14,8 +14,14 @@ auto_migrate = true
 # 1..5; the UI derives a score from them (placeholder for the real
 # prioritization model). Timestamps are UTC "YYYY-MM-DD HH:MM:SS" to match
 # SQLite's CURRENT_TIMESTAMP.
+#
+# versioned: mkio keeps every version of every row in tasks__history, keyed
+# (task_id, _mkio_version), and the live row's _mkio_version is a cursor into
+# that chain. The undo/redo ops step it. A delete is a real delete: the row
+# goes and its history goes with it.
 [tables.tasks]
-columns = { task_id = "TEXT PRIMARY KEY", parent_task_id = "TEXT NOT NULL DEFAULT ''", title = "TEXT NOT NULL", notes = "TEXT NOT NULL DEFAULT ''", status = "TEXT NOT NULL DEFAULT 'open'", importance = "INTEGER NOT NULL DEFAULT 3", urgency = "INTEGER NOT NULL DEFAULT 3", due = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", completed_at = "TEXT NOT NULL DEFAULT ''" }
+columns = { task_id = "TEXT PRIMARY KEY", parent_task_id = "TEXT NOT NULL DEFAULT ''", title = "TEXT NOT NULL", notes = "TEXT NOT NULL DEFAULT ''", status = "TEXT NOT NULL DEFAULT 'open'", importance = "INTEGER NOT NULL DEFAULT 3", urgency = "INTEGER NOT NULL DEFAULT 3", due = "TEXT NOT NULL DEFAULT ''", last_event = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", completed_at = "TEXT NOT NULL DEFAULT ''" }
+versioned = true
 
 # One row per reference: something a task points at. kind is "url" (href =
 # the URL, including mailto: and mail-client deep links), "text" (body = a
@@ -26,8 +32,11 @@ columns = { task_id = "TEXT PRIMARY KEY", parent_task_id = "TEXT NOT NULL DEFAUL
 # two mirrored rows, one per side with the pair's two wordings, so a pane
 # filtered on task_id shows every link of a task in either direction. label
 # is what the UI shows.
+# versioned, like tasks: task_refs__history holds every version of every
+# reference, and undo/redo step one along its own chain.
 [tables.task_refs]
 columns = { ref_id = "INTEGER PRIMARY KEY AUTOINCREMENT", task_id = "TEXT NOT NULL", kind = "TEXT NOT NULL DEFAULT 'url'", relation = "TEXT NOT NULL DEFAULT ''", label = "TEXT NOT NULL DEFAULT ''", href = "TEXT NOT NULL DEFAULT ''", body = "TEXT NOT NULL DEFAULT ''", mime = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
+versioned = true
 
 # The relations two linked tasks can have, one row per pair: forward is the
 # wording from this task to that one ("blocks"), backward the wording back
@@ -39,6 +48,16 @@ columns = { ref_id = "INTEGER PRIMARY KEY AUTOINCREMENT", task_id = "TEXT NOT NU
 [tables.relations]
 columns = { relation_id = "INTEGER PRIMARY KEY AUTOINCREMENT", forward = "TEXT NOT NULL", backward = "TEXT NOT NULL DEFAULT ''", notes = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
 seed = "relations.json"
+
+# What happened to a task, one row per event: created, split_from / split_to,
+# edited, moved, completed, reopened, ref_added / ref_edited / ref_deleted, and
+# undone / redone. This is the narrative the version history cannot carry —
+# mkio's _mkio_op says only "insert" or "update", and a redo-branch truncation
+# discards versions, while these rows are ordinary and stay. Deliberately NOT
+# versioned: append-only, never edited. `actor` is --user; the transaction ref
+# is mkio's own _mkio_ref column. Deleting a task removes its events with it.
+[tables.task_events]
+columns = { event_id = "INTEGER PRIMARY KEY AUTOINCREMENT", task_id = "TEXT NOT NULL", action = "TEXT NOT NULL", detail = "TEXT NOT NULL DEFAULT ''", ref_id = "INTEGER NOT NULL DEFAULT 0", actor = "TEXT NOT NULL DEFAULT ''", at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
 
 # The Task ID sequence: one row, name = "task", last = the last number issued.
 # Written in the same transaction as each insert so numbers are never reused
@@ -76,23 +95,23 @@ description = "Add, split, edit, complete, reopen, and delete tasks"
 [services.tasks.ops]
 add = [
     { table = "counters", op_type = "upsert", key = ["name"], fields = ["last"], defaults = { name = "task", last = 0 } },
-    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due"], defaults = { task_id = "", parent_task_id = "", notes = "", importance = 3, urgency = 3, due = "" } },
+    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due", "last_event"], defaults = { task_id = "", parent_task_id = "", notes = "", importance = 3, urgency = 3, due = "", last_event = "" } },
 ]
 split = [
     { table = "counters", op_type = "upsert", key = ["name"], fields = ["last"], defaults = { name = "task", last = 0 } },
-    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due"], defaults = { task_id = "", notes = "", importance = 3, urgency = 3, due = "" } },
+    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due", "last_event"], defaults = { task_id = "", notes = "", importance = 3, urgency = 3, due = "", last_event = "" } },
 ]
 edit = [
-    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["title", "notes", "importance", "urgency", "due", "updated_at"] },
+    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["title", "notes", "importance", "urgency", "due", "updated_at", "last_event"], defaults = { last_event = "" } },
 ]
 move = [
-    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["parent_task_id", "updated_at"] },
+    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["parent_task_id", "updated_at", "last_event"], defaults = { last_event = "" } },
 ]
 complete = [
-    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["completed_at", "updated_at"], defaults = { status = "complete" } },
+    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["completed_at", "updated_at", "last_event"], defaults = { status = "complete", last_event = "" } },
 ]
 reopen = [
-    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["updated_at"], defaults = { status = "open", completed_at = "" } },
+    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["updated_at", "last_event"], defaults = { status = "open", completed_at = "", last_event = "" } },
 ]
 delete = [
     { table = "tasks", op_type = "delete", key = ["task_id"] },
@@ -121,6 +140,34 @@ edit_relation = [
 delete_relation = [
     { table = "relations", op_type = "delete", key = ["relation_id"] },
 ]
+# One narrative row. Always filled in by TaskTransactions, never bound with
+# `bind`: a bind's "$N.field" is an absolute position in the request's op
+# list, and _steps repeats an op set once per row for a cascade or a link's
+# mirror, so a bound event would name the first row's write for every row.
+add_event = [
+    { table = "task_events", op_type = "insert", fields = ["task_id", "action", "detail", "ref_id", "actor"], defaults = { detail = "", ref_id = 0, actor = "" } },
+]
+# Deleting a task takes its narrative with it: nothing can reach those rows
+# once the task is gone, and the delete is meant to leave nothing behind.
+# A reference change is a change to the task that owns it, so it makes a
+# version of that task too — which is what puts "attached a file" or "linked
+# to TKMA00000002" in the task's own recorded history. Only for the ops that
+# do not already write the task row: a second update in one transaction
+# would record a second version of it.
+touch = [
+    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["last_event"] },
+]
+delete_event = [
+    { table = "task_events", op_type = "delete", key = ["event_id"] },
+]
+# mkio's cursor moves: they take only the key, read the values from the
+# history table, and record no new version, so a step is always reversible.
+# The UI never calls these — it calls undo_action / redo_action, which step
+# every row one user action wrote (see TaskTransactions).
+undo_task = [{ table = "tasks", op_type = "undo", key = ["task_id"] }]
+redo_task = [{ table = "tasks", op_type = "redo", key = ["task_id"] }]
+undo_ref = [{ table = "task_refs", op_type = "undo", key = ["ref_id"] }]
+redo_ref = [{ table = "task_refs", op_type = "redo", key = ["ref_id"] }]
 
 [services.all_tasks]
 protocol = "query"
@@ -138,6 +185,62 @@ filterable = ["task_id", "kind", "relation"]
 protocol = "query"
 description = "Every relation pair, live"
 primary_table = "relations"
+
+# What happened to a task, live. The Activity pane subscribes, following the
+# Tasks selection through table linking the way the References pane does.
+[services.task_activity]
+protocol = "query"
+description = "Every recorded event of every task, live"
+primary_table = "task_events"
+filterable = ["task_id", "action"]
+
+# The recorded versions of one task. mkio never advertises a history table and
+# writes no service for it, so exposing history is this service's doing.
+# mkui's history pane points its table here and filters to one record
+# server-side, which is why task_id must be filterable.
+[services.task_versions]
+protocol = "query"
+description = "Every recorded version of every task, live"
+primary_table = "tasks__history"
+filterable = ["task_id", "_mkio_op", "_mkio_ref"]
+
+# Where a task's cursor sits and how far its chain goes — mkui's history pane
+# asks this to know whether a redo is possible. Written as two subqueries so
+# it answers with one row even when the task has been undone out of existence
+# (current NULL, top the version redo would rebuild).
+[services.task_version_state]
+protocol = "reqrep"
+description = "A task's current version and the highest one recorded"
+sql = """
+SELECT (SELECT _mkio_version FROM tasks WHERE task_id = :task_id) AS current,
+       (SELECT MAX(_mkio_version) FROM tasks__history WHERE task_id = :task_id) AS top
+"""
+
+[services.ref_versions]
+protocol = "query"
+description = "Every recorded version of every reference, live"
+primary_table = "task_refs__history"
+filterable = ["ref_id", "task_id", "_mkio_op", "_mkio_ref"]
+
+# One record's chain, as a request rather than a subscription: mkui reads it
+# to spell out what an undo or redo is about to change, in the confirmation.
+[services.task_version_chain]
+protocol = "reqrep"
+description = "Every recorded version of one task, oldest first"
+sql = "SELECT * FROM tasks__history WHERE task_id = :task_id ORDER BY _mkio_version"
+
+[services.ref_version_chain]
+protocol = "reqrep"
+description = "Every recorded version of one reference, oldest first"
+sql = "SELECT * FROM task_refs__history WHERE ref_id = :ref_id ORDER BY _mkio_version"
+
+[services.ref_version_state]
+protocol = "reqrep"
+description = "A reference's current version and the highest one recorded"
+sql = """
+SELECT (SELECT _mkio_version FROM task_refs WHERE ref_id = :ref_id) AS current,
+       (SELECT MAX(_mkio_version) FROM task_refs__history WHERE ref_id = :ref_id) AS top
+"""
 
 # The Reference dialog's relation picker: one entry per wording, a symmetric
 # pair appearing once (UNION dedupes).

@@ -149,8 +149,13 @@ class TestServe:
         captured = {}
 
         class FakeApp:
+            services: dict = {}
+
             def on_startup(self, cb):
                 captured["startup"] = cb
+
+            def on_undo_redo(self, cb):
+                captured["undo_redo"] = cb
 
             def run(self):
                 captured["ran"] = True

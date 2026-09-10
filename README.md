@@ -18,7 +18,8 @@ A task can be **split** into child tasks, and a child can be split again, to
 any depth. The blotter nests children under their parent, each level sorted
 by score, with carets to fold a subtree away. Completing a task completes
 everything split from it; reopening a child reopens its ancestors; deleting a
-task deletes its whole subtree.
+task deletes its whole subtree — permanently, and it is the one thing here
+that cannot be undone.
 
 **Move** re-files a task: pick a new parent, or *— Top level —* to make it a
 top-level task again. Everything split from it comes along. The picker offers
@@ -75,6 +76,40 @@ to"). A new database starts with those two. Renaming a relation rewrites
 every link that uses it; a relation in use cannot be deleted. Uploaded
 files live beside the database in `<db>.files/`, named by content hash;
 deleting the last reference to a file, or its task, removes the file.
+
+Each task also shows its **Last Event** — the most recent thing to have
+happened to it, in words: *Created*, *Split into Wire the pane*, *Attached a
+file: shot.png*, *Linked: blocks TKMA00000002*, *Moved under TKMA00000007*.
+
+**Every change is kept.** Tasks and references carry a **version** number,
+shown as a column, and every version of every row is recorded. Adding,
+editing or removing a reference makes a version of the task that owns it —
+both sides of a link — so a task's history covers its references as well as
+its own fields, and each version says what it was about. *History* on
+the Tasks or References pane — or in the Detail pane, for whatever its
+cursor is on — opens that record: the versions as a table you can sort and
+search, a **Diff** of what changed between any two, and **Blame** for which
+version last set each field.
+
+**Undo and Redo** step a record back and forth along those versions, from
+the same panes. They step *the whole action*, not one row: undoing a
+completion reopens the subtree it completed, undoing a link removes both
+halves, undoing a move puts back the ancestors it reopened. A confirmation
+says what is about to change. Undoing the creation of a task removes it,
+and redo brings it back. Editing a task after undoing it discards what was
+undone, the way typing after an undo does in an editor. There is no
+keyboard shortcut on purpose — this writes to data everyone on the server
+shares.
+
+Undo and redo are refused rather than half-applied when they would strand
+something: a task that has since been split, a parent or a linked task that
+has since been deleted, or a row another change has moved past.
+
+**Activity** (under the Tasks menu) is the other half: a plain list of what
+happened to the selected task — created, split from, split to, edited,
+moved, completed, reopened, references added, edited and deleted, and every
+undo and redo. It follows the blotter's selection like the References pane,
+and unlike the version record it is never rewritten.
 
 ## Quick start
 
@@ -144,7 +179,11 @@ stores a link's relation as its wording ("blocked by") rather than a key
 changes no schema — the Detail pane's new reference list reads the tables
 0.4.0 already had, and neither does 0.6.0: moving a task rewrites one
 existing column. 0.7.0 changes no schema either: the Detail pane's toolbar
-sends the ops that were already there.
+sends the ops that were already there. 0.8.0 adds a `last_event` column, the
+`task_events` table, and a recorded history of `tasks` and `task_refs` — all
+of which an existing database picks up on first start: `auto_migrate` adds
+the column and the tables, and every row already there is recorded as its
+own version 1 so it can be stepped back to. Nothing has to be deleted.
 
 ## Development
 

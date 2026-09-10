@@ -3,7 +3,8 @@
 import pytest
 
 from mktask.services import (
-    FILES_ROUTE, REF_KINDS, SEED_RELATIONS, TASK_ID_PATTERN, default_label, format_task_id, user_prefix,
+    FILES_ROUTE, REF_KINDS, SEED_RELATIONS, TASK_ID_PATTERN, TOP_LEVEL_DETAIL,
+    default_label, event_phrase, format_task_id, user_prefix,
 )
 
 
@@ -68,3 +69,32 @@ def test_seed_relations_are_well_formed():
 def test_reference_kinds():
     assert REF_KINDS == ("url", "text", "file", "task")
     assert FILES_ROUTE == "/files/"
+
+
+@pytest.mark.parametrize("args, phrase", [
+    (("created",), "Created"),
+    (("split_from", "TKMA00000001"), "Split from TKMA00000001"),
+    (("split_to", "Wire the pane"), "Split into Wire the pane"),
+    (("edited",), "Edited"),
+    (("moved", "TKMA00000007"), "Moved under TKMA00000007"),
+    (("moved", TOP_LEVEL_DETAIL), "Moved to the top level"),
+    (("moved",), "Moved to the top level"),
+    (("completed",), "Completed"),
+    (("reopened",), "Reopened"),
+    (("ref_added", "shot.png", "file"), "Attached a file: shot.png"),
+    (("ref_added", "Example", "url"), "Added a URL: Example"),
+    (("ref_added", "a note", "text"), "Added a snippet: a note"),
+    (("ref_added", "blocks TKMA00000002", "task"), "Linked: blocks TKMA00000002"),
+    (("ref_edited", "Example"), "Edited a reference: Example"),
+    (("ref_deleted", "Example"), "Removed a reference: Example"),
+])
+def test_event_phrase(args, phrase):
+    assert event_phrase(*args) == phrase
+
+
+def test_event_phrase_never_returns_nothing():
+    """It fills a column the blotter shows, so an action nobody thought to
+    word must still read as something rather than as a blank cell."""
+    for action in ("undone", "redone", "something_new"):
+        assert event_phrase(action).strip()
+    assert event_phrase("ref_added", "", "file") == "Attached a file"

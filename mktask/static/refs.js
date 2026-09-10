@@ -68,6 +68,7 @@ const TASK_FIELDS = [
   ["due", "Due"],
   ["parent_task_id", "Split from"],
   ["created_at", "Created"],
+  ["last_event", "Last Event"],
   ["notes", "Notes"],
 ];
 const ALWAYS = new Set(["status", "importance", "urgency", "score"]);
@@ -231,6 +232,7 @@ registerWidget("task-refs", (spec, app, host) => {
   const clientP = ensureMkio(app.config.mkio.url);
 
   const tasksPane = spec.tasksPane ?? "tasks";
+  const refsPane = spec.refsPane ?? "references";
 
   const select = (taskId) =>
     app.fireAction("table.select", { pane: tasksPane, keys: [taskId] });
@@ -350,6 +352,40 @@ registerWidget("task-refs", (spec, app, host) => {
     if (ref) await openBorrowed("deleteRef", ref);   // the button is off otherwise
   });
 
+  /** Open the recorded versions of whatever the cursor is on.
+   *
+   *  mkui's history pane follows a *table* pane's selection, so the record
+   *  has to be selected there first — `table.history` takes the keys and
+   *  does it, but says only whether the pane has a history block, not
+   *  whether the record was reachable. So the selection is made here, the
+   *  same way "Go to" makes it, and the pane opened once it lands.
+   *
+   *  A reference of a complete child is the case that misses: the
+   *  References pane is filtered to what the blotter broadcasts, and the
+   *  blotter hides complete children. `reveal` drops the status filter and
+   *  tries once more, which is what widens the broadcast.
+   */
+  const historyCursor = guarded(async () => {
+    const ref = cursorRef();
+    const [pane, key, what] = ref
+      ? [refsPane, ref.ref_id, `reference ${ref.ref_id}`]
+      : [tasksPane, task?.task_id, task?.task_id];
+    if (key == null) { setStatus("Select a task first.", true); return; }
+    let result = app.fireAction("table.select", { pane, keys: [key] });
+    let revealed = false;
+    if (!result?.selected?.length && spec.reveal) {
+      app.fireAction("table.filter", { pane: tasksPane, filters: { status: null }, merge: true });
+      result = app.fireAction("table.select", { pane, keys: [key] });
+      revealed = !!result?.selected?.length;
+    }
+    if (!result?.selected?.length) {
+      setStatus(`${what} is not on show in the ${pane} pane`, true);
+      return;
+    }
+    app.fireAction("table.history", { pane });
+    setStatus(revealed ? `History of ${what} (showing all tasks)` : `History of ${what}`);
+  });
+
   const toolbarBtn = (label, onClick) => {
     const btn = el("button", "mkui-btn mkui-toolbar-btn", label);
     btn.type = "button";
@@ -358,6 +394,7 @@ registerWidget("task-refs", (spec, app, host) => {
     return btn;
   };
   const editBtn = toolbarBtn("Edit", editCursor);
+  const historyBtn = toolbarBtn("History", historyCursor);
   const deleteBtn = toolbarBtn("Delete", deleteCursor);
 
   // Delete wears the red the blotter and the References pane paint on theirs,
@@ -368,10 +405,11 @@ registerWidget("task-refs", (spec, app, host) => {
   const armedStyle = (borrowedButton("deleteRef")?.style ?? [])
     .find((rule) => rule.when === "enabled") ?? null;
 
-  /** Edit follows the cursor; Delete is a reference's alone. */
+  /** Edit and History follow the cursor; Delete is a reference's alone. */
   function updateButtons() {
     const ref = cursorRef();
     editBtn.disabled = !ref && !task;
+    historyBtn.disabled = !ref && !task;
     deleteBtn.disabled = !ref;
     const armed = ref && armedStyle;
     deleteBtn.classList.toggle("mkui-btn-styled", !!armed);
@@ -563,7 +601,7 @@ registerWidget("task-refs", (spec, app, host) => {
         for (const row of rows) refs.set(row.ref_id, row);
         render();
       },
-      onUpdate: (op, row) => {
+      onUpdate: (op, row, info) => {
         if (mine !== gen) return;
         // A delete is announced with the request's data — a ref_id, no more —
         // so it is matched by id, not by task. mkio also announces a row that
@@ -571,6 +609,10 @@ registerWidget("task-refs", (spec, app, host) => {
         if (op === "delete") { if (!refs.delete(row.ref_id)) return; }
         else if (!scope.has(row.task_id)) return;
         else refs.set(row.ref_id, row);
+        // mkio 0.5 says why a row moved: "undo"/"redo" for a version cursor
+        // move. A reference appearing or vanishing under the reader is worth
+        // a word — the blotter flashes it, but this pane draws its own list.
+        if (info?.cause) setStatus(`Reference ${info.cause === "undo" ? "undone" : "redone"}`);
         render();
       },
       onDelta: (changes) => {

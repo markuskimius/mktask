@@ -23,8 +23,8 @@ classifiers = [
     "Topic :: Office/Business :: Scheduling",
 ]
 dependencies = [
-    "mkio>=0.2.0",
-    "mkui>=0.2.23",
+    "mkio>=0.5.0",   # versioned tables, undo/redo ops, on_undo_redo, `cause` on the wire
+    "mkui>=0.4.0",   # the mkio-history pane, history blocks, undo/redo buttons
 ]
 
 [project.optional-dependencies]

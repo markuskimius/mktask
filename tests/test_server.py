@@ -1,6 +1,7 @@
 """Integration tests: the full mktask server over HTTP and WebSocket."""
 
 import asyncio
+import itertools
 import json
 import re
 import socket
@@ -65,7 +66,19 @@ async def _recv_json(ws):
     return json.loads(msg.data)
 
 
+_REF_SEQ = itertools.count(1)
+
+
 async def _txn(ws, op, data, ref, expect="result"):
+    """Send one transaction. `ref` is a label, not an identity.
+
+    mkio stamps every row a transaction writes with its ref, and
+    `undo_action` groups a user action by exactly that — so two tests
+    reusing a label on one server would have their rows grouped together
+    and undone as one action. A real client mints a fresh ref per
+    transaction; making these unique is what models that.
+    """
+    ref = f"{ref}-{next(_REF_SEQ)}"
     await ws.send_json({"service": "tasks", "type": "transaction", "op": op,
                         "data": data, "ref": ref})
     resp = await _recv_json(ws)
@@ -1321,3 +1334,673 @@ class TestCliFlags:
             )
         assert result.returncode == 1
         assert f"cannot listen on 127.0.0.1:{port}" in result.stderr
+
+
+# ─── Recorded versions, undo and redo ───────────────────────────────
+#
+# mkio keeps every version of a `versioned = true` row in <table>__history and
+# its undo/redo ops step the live row's cursor along that chain. What mktask
+# adds is the grouping — one user action is rarely one row — the guards, and
+# the narrative in task_events. These exercise mktask's part of it, through
+# the services and ops the UI actually uses.
+
+async def _chain(ws, service, key):
+    """One record's recorded versions, oldest first."""
+    return await _request(ws, service, key)
+
+
+async def _version(ws, task_id):
+    """Where a task's cursor sits, and how high its chain goes."""
+    row = (await _request(ws, "task_version_state", {"task_id": task_id}))[0]
+    return row["current"], row["top"]
+
+
+async def _activity(ws, task_id):
+    """A task's events, oldest first, through the live query the pane uses."""
+    subid = f"a-{task_id}"
+    await ws.send_json({"service": "task_activity", "type": "subscribe", "protocol": "query",
+                        "subid": subid, "ref": subid, "filter": f"task_id == '{task_id}'"})
+    snap = await _recv_json(ws)
+    await ws.send_json({"service": "task_activity", "type": "unsubscribe", "subid": subid})
+    return sorted(snap["rows"], key=lambda r: r["event_id"])
+
+
+async def _actions(ws, task_id):
+    return [r["action"] for r in await _activity(ws, task_id)]
+
+
+async def _undo(ws, key, ref, expect="result"):
+    return await _txn(ws, "undo_action", key, ref, expect=expect)
+
+
+async def _redo(ws, key, ref, expect="result"):
+    return await _txn(ws, "redo_action", key, ref, expect=expect)
+
+
+async def _edit(ws, task_id, ref, **fields):
+    """`edit` declares no defaults, so every field is required: fill them in."""
+    full = {"title": "", "notes": "", "importance": 3, "urgency": 3, "due": ""}
+    return await _txn(ws, "edit", {"task_id": task_id, "updated_at": NOW, **full, **fields}, ref)
+
+
+class TestVersions:
+    async def test_every_write_records_a_version(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Versioned", "v1")
+                assert await _version(ws, t) == (1, 1)
+                await _edit(ws, t, "v2", title="Versioned twice")
+                await asyncio.sleep(0.2)
+                assert await _version(ws, t) == (2, 2)
+                chain = await _chain(ws, "task_version_chain", {"task_id": t})
+                assert [r["_mkio_version"] for r in chain] == [1, 2]
+                assert [r["title"] for r in chain] == ["Versioned", "Versioned twice"]
+                # mkio stamps the op that wrote each version, and the user.
+                assert [r["_mkio_op"] for r in chain] == ["insert", "update"]
+
+    async def test_undo_and_redo_step_the_cursor(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Steppable", "u1")
+                await _edit(ws, t, "u2", title="Stepped once", importance=5)
+                await asyncio.sleep(0.2)
+                await _undo(ws, {"task_id": t}, "u3")
+                await asyncio.sleep(0.2)
+                rows = await _snapshot(ws, "su1")
+                assert "Steppable" in rows and rows["Steppable"]["importance"] == 3
+                assert await _version(ws, t) == (1, 2)   # the redo is still there
+                await _redo(ws, {"task_id": t}, "u4")
+                await asyncio.sleep(0.2)
+                rows = await _snapshot(ws, "su2")
+                assert rows["Stepped once"]["importance"] == 5
+                assert await _version(ws, t) == (2, 2)
+
+    async def test_undo_of_a_creation_removes_the_task_and_redo_rebuilds_it(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Fleeting", "c1")
+                await _undo(ws, {"task_id": t}, "c2")
+                await asyncio.sleep(0.2)
+                assert "Fleeting" not in await _snapshot(ws, "sc1")
+                assert await _version(ws, t) == (None, 1)   # no row, chain intact
+                await _redo(ws, {"task_id": t}, "c3")
+                await asyncio.sleep(0.2)
+                assert "Fleeting" in await _snapshot(ws, "sc2")
+
+    async def test_a_new_write_discards_the_redo_branch(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Branching", "b1")
+                await _edit(ws, t, "b2", title="Branch A")
+                await asyncio.sleep(0.2)
+                await _undo(ws, {"task_id": t}, "b3")
+                await asyncio.sleep(0.2)
+                assert await _version(ws, t) == (1, 2)
+                await _edit(ws, t, "b4", title="Branch B")
+                await asyncio.sleep(0.2)
+                assert await _version(ws, t) == (2, 2)     # not 3: v2 was rewritten
+                chain = await _chain(ws, "task_version_chain", {"task_id": t})
+                assert [r["title"] for r in chain] == ["Branching", "Branch B"]
+                await _redo(ws, {"task_id": t}, "b5", expect="error")
+
+    async def test_undo_steps_every_row_the_action_wrote(self, server):
+        """A completion cascades over the subtree; undoing it takes the whole
+        cascade back, not just the task the button was pressed on."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Cascade parent", "g1")
+                await _split(ws, parent, "Cascade child", "g2")
+                await asyncio.sleep(0.2)
+                child = (await _snapshot(ws, "sg1"))["Cascade child"]["task_id"]
+                await _complete(ws, parent, "g3")
+                await asyncio.sleep(0.2)
+                rows = await _snapshot(ws, "sg2")
+                assert rows["Cascade parent"]["status"] == "complete"
+                assert rows["Cascade child"]["status"] == "complete"
+                await _undo(ws, {"task_id": parent}, "g4")
+                await asyncio.sleep(0.3)
+                rows = await _snapshot(ws, "sg3")
+                assert rows["Cascade parent"]["status"] == "open"
+                assert rows["Cascade child"]["status"] == "open", "the child was left behind"
+                assert await _version(ws, child) == (1, 2)
+
+    async def test_undo_steps_both_halves_of_a_link(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Link left", "l1")
+                b = await _add(ws, "Link right", "l2")
+                wording = WORDINGS[0]
+                await _add_ref(ws, a, "l3", kind="task", href=b, relation=wording)
+                await asyncio.sleep(0.2)
+                assert len(await _refs(ws, a)) == 1 and len(await _refs(ws, b)) == 1
+                ref_id = (await _refs(ws, a))[0]["ref_id"]
+                await _undo(ws, {"ref_id": ref_id}, "l4")
+                await asyncio.sleep(0.3)
+                assert await _refs(ws, a) == [], "the near half survived"
+                assert await _refs(ws, b) == [], "the mirror was left behind"
+
+    async def test_undo_of_a_split_takes_the_child_back(self, server):
+        """Splitting sets the parent's Last Event too, so the parent's latest
+        version *is* the split: undoing it removes the child and steps the
+        parent back, rather than trying to undo the parent's creation."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Split parent", "sp1")
+                await _split(ws, parent, "Split child", "sp2")
+                await asyncio.sleep(0.2)
+                assert await _version(ws, parent) == (2, 2)
+                await _undo(ws, {"task_id": parent}, "sp3")
+                await asyncio.sleep(0.3)
+                rows = await _snapshot(ws, "ssp1")
+                assert "Split child" not in rows
+                assert rows["Split parent"]["last_event"] == "Created"
+
+    async def test_undo_refuses_to_strand_a_child(self, server):
+        """A task moved under another leaves that parent untouched, so the
+        parent can still be sitting on the version that created it while
+        having a child — the one way undoing to nothing would strand one."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Guard parent", "s1")
+                child = await _add(ws, "Guard child", "s2")
+                await _txn(ws, "move", {"task_id": child, "parent_task_id": parent,
+                                        "updated_at": NOW}, "s3")
+                await asyncio.sleep(0.2)
+                assert await _version(ws, parent) == (1, 1)
+                resp = await _undo(ws, {"task_id": parent}, "s4", expect="error")
+                assert "still has" in resp["message"]
+                assert "Guard parent" in await _snapshot(ws, "ss1")
+
+    async def test_undo_refuses_when_a_row_of_the_group_moved_on(self, server):
+        """Undo steps every row off the version the action wrote. If one of
+        them has moved since, the group no longer describes what is there —
+        stepping the rest would half-apply it.
+
+        Going through `undo_action` keeps a group together, so the way to
+        pull one apart is mkio's own per-row op, which is what this does.
+        """
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Merge left", "m1")
+                b = await _add(ws, "Merge right", "m2")
+                await _add_ref(ws, a, "m3", kind="task", href=b, relation=WORDINGS[0])
+                await asyncio.sleep(0.2)
+                near = (await _refs(ws, a))[0]["ref_id"]
+                far = (await _refs(ws, b))[0]["ref_id"]
+                await _txn(ws, "undo_ref", {"ref_id": far}, "m4")   # one half only
+                await asyncio.sleep(0.2)
+                resp = await _undo(ws, {"ref_id": near}, "m5", expect="error")
+                assert "changed since" in resp["message"]
+                assert len(await _refs(ws, a)) == 1, "the near half was stepped anyway"
+
+    async def test_undoing_a_title_restores_the_labels_of_links_to_it(self, server):
+        """The hook's reason for existing: a cursor move is not `edit`, so
+        nothing else refreshes a link that shows the title it moved off."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Labelled left", "h1")
+                b = await _add(ws, "Labelled right", "h2")
+                await _add_ref(ws, a, "h3", kind="task", href=b, relation=WORDINGS[0])
+                await asyncio.sleep(0.2)
+                await _edit(ws, b, "h4", title="Renamed right")
+                await asyncio.sleep(0.2)
+                assert (await _refs(ws, a))[0]["label"] == "Renamed right"
+                await _undo(ws, {"task_id": b}, "h5")
+                await asyncio.sleep(0.4)
+                assert (await _refs(ws, a))[0]["label"] == "Labelled right"
+
+    async def test_a_step_is_narrated(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Narrated", "n1")
+                await _edit(ws, t, "n2", title="Narrated again")
+                await asyncio.sleep(0.2)
+                await _undo(ws, {"task_id": t}, "n3")
+                await asyncio.sleep(0.4)
+                await _redo(ws, {"task_id": t}, "n4")
+                await asyncio.sleep(0.4)
+                assert await _actions(ws, t) == ["created", "edited", "undone", "redone"]
+
+
+class TestActivity:
+    async def test_every_op_is_recorded(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Story parent", "e1")
+                await _split(ws, parent, "Story child", "e2")
+                await asyncio.sleep(0.2)
+                child = (await _snapshot(ws, "se1"))["Story child"]["task_id"]
+                await _edit(ws, child, "e3", title="Story child edited")
+                await _add_ref(ws, child, "e4", kind="url", href="https://example.com")
+                await asyncio.sleep(0.2)
+                ref_id = (await _refs(ws, child))[0]["ref_id"]
+                await _txn(ws, "edit_ref", {"ref_id": ref_id, "href": "https://example.org",
+                                            "label": "Example", "updated_at": NOW}, "e5")
+                await _txn(ws, "delete_ref", {"ref_id": ref_id}, "e6")
+                await _complete(ws, child, "e7")
+                await _reopen(ws, child, "e8")
+                await asyncio.sleep(0.3)
+                assert await _actions(ws, child) == [
+                    "split_from", "edited", "ref_added", "ref_edited", "ref_deleted",
+                    "completed", "reopened",
+                ]
+                assert "split_to" in await _actions(ws, parent)
+
+    async def test_a_move_records_where_it_went(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Mover", "mv1")
+                b = await _add(ws, "New parent", "mv2")
+                await _txn(ws, "move", {"task_id": a, "parent_task_id": b, "updated_at": NOW}, "mv3")
+                await asyncio.sleep(0.2)
+                moved = [r for r in await _activity(ws, a) if r["action"] == "moved"]
+                assert moved and moved[0]["detail"] == b
+
+    async def test_the_actor_is_recorded(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Attributed", "ac1")
+                await asyncio.sleep(0.2)
+                assert (await _activity(ws, t))[0]["actor"] == "mark"
+
+
+class TestDeleteIsPermanent:
+    """A delete is the one thing here that cannot be undone, so it must leave
+    nothing behind: mkio drops a versioned row's history with the row, and
+    `_op_delete` takes the subtree's events and any chain an undo left."""
+
+    def test_delete_leaves_nothing(self, tmp_path):
+        files = tmp_path / "refs"
+        proc, base = _start("--user", "mark", "--files", str(files))
+        try:
+            asyncio.run(self._delete_leaves_nothing(base, files))
+        finally:
+            _stop(proc)
+
+    async def _delete_leaves_nothing(self, base, files):
+        png = b"\x89PNG\r\n\x1a\n" + b"deleteme"
+        async with aiohttp.ClientSession() as s:
+            _, up = await _upload(s, base, png, "image/png")
+            name = up["href"].rsplit("/", 1)[1]
+            async with s.ws_connect(base + "/ws") as ws:
+                parent = await _add(ws, "Doomed parent", "d1")
+                await _split(ws, parent, "Doomed child", "d2")
+                await asyncio.sleep(0.2)
+                child = (await _snapshot(ws, "sd1"))["Doomed child"]["task_id"]
+                await _edit(ws, child, "d3", title="Doomed child edited")
+                await _add_ref(ws, child, "d4", kind="file", href=up["href"], mime=up["mime"])
+                await _add_ref(ws, child, "d5", kind="text", body="a secret note")
+                await asyncio.sleep(0.3)
+                assert (files / name).exists()
+                # created, edited, and one version per reference added
+                assert len(await _chain(ws, "task_version_chain", {"task_id": child})) == 4
+
+                await _txn(ws, "delete", {"task_id": parent}, "d6")
+                await asyncio.sleep(0.4)
+
+                for task in (parent, child):
+                    assert await _chain(ws, "task_version_chain", {"task_id": task}) == [], task
+                    assert await _activity(ws, task) == [], task
+                assert "Doomed parent" not in await _snapshot(ws, "sd2")
+                assert not (files / name).exists(), "the file outlived its only reference"
+                # Nothing of the snippet is left to read back.
+                rows = await _request(ws, "ref_version_chain", {"ref_id": 0})
+                assert all("secret" not in json.dumps(r) for r in rows)
+
+    def test_delete_takes_an_undone_reference_with_it(self, tmp_path):
+        files = tmp_path / "refs"
+        proc, base = _start("--user", "mark", "--files", str(files))
+        try:
+            asyncio.run(self._undone_reference(base, files))
+        finally:
+            _stop(proc)
+
+    async def _undone_reference(self, base, files):
+        png = b"\x89PNG\r\n\x1a\n" + b"undone"
+        async with aiohttp.ClientSession() as s:
+            _, up = await _upload(s, base, png, "image/png")
+            name = up["href"].rsplit("/", 1)[1]
+            async with s.ws_connect(base + "/ws") as ws:
+                t = await _add(ws, "Holds a file", "uf1")
+                await _add_ref(ws, t, "uf2", kind="file", href=up["href"], mime=up["mime"])
+                await asyncio.sleep(0.2)
+                ref_id = (await _refs(ws, t))[0]["ref_id"]
+
+                # Undone, not deleted: the row goes, the chain and the file
+                # stay, because a redo has to be able to bring both back.
+                await _undo(ws, {"ref_id": ref_id}, "uf3")
+                await asyncio.sleep(0.3)
+                assert await _refs(ws, t) == []
+                assert (files / name).exists(), "redo would have nothing to show"
+                assert await _chain(ws, "ref_version_chain", {"ref_id": ref_id}) != []
+                await _redo(ws, {"ref_id": ref_id}, "uf4")
+                await asyncio.sleep(0.3)
+                assert (await _refs(ws, t))[0]["href"] == up["href"]
+                async with s.get(base + up["href"]) as resp:
+                    assert resp.status == 200
+
+                # Undone again, then the task deleted: now it is for good.
+                await _undo(ws, {"ref_id": ref_id}, "uf5")
+                await asyncio.sleep(0.3)
+                await _txn(ws, "delete", {"task_id": t}, "uf6")
+                await asyncio.sleep(0.4)
+                assert await _chain(ws, "ref_version_chain", {"ref_id": ref_id}) == []
+                assert not (files / name).exists(), "an undone reference kept the file alive"
+
+    async def test_delete_takes_an_undone_link_from_a_surviving_task(self, server):
+        """The half owned by the task that survives is a chain under *its*
+        key, so the sweep has to reach it by where the link pointed."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Survivor", "ul1")
+                b = await _add(ws, "Doomed link target", "ul2")
+                await _add_ref(ws, a, "ul3", kind="task", href=b, relation=WORDINGS[0])
+                await asyncio.sleep(0.2)
+                near = (await _refs(ws, a))[0]["ref_id"]
+                far = (await _refs(ws, b))[0]["ref_id"]
+                await _undo(ws, {"ref_id": near}, "ul4")
+                await asyncio.sleep(0.3)
+                assert await _refs(ws, a) == [] and await _refs(ws, b) == []
+
+                await _txn(ws, "delete", {"task_id": b}, "ul5")
+                await asyncio.sleep(0.4)
+                assert "Survivor" in await _snapshot(ws, "sul1")
+                for ref_id in (near, far):
+                    assert await _chain(ws, "ref_version_chain", {"ref_id": ref_id}) == [], ref_id
+
+
+class TestLastEvent:
+    """`tasks.last_event` says what happened to a task most recently, in
+    words. Because `tasks` is versioned it rides along in every recorded
+    version, so a task's history says what each version was *about* —
+    `_mkio_op` only ever says "insert" or "update"."""
+
+    async def _last(self, ws, task_id):
+        rows = await _snapshot(ws, f"le-{task_id}")
+        return {r["task_id"]: r["last_event"] for r in rows.values()}[task_id]
+
+    async def test_each_op_describes_itself(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Describe me", "le1")
+                assert await self._last(ws, t) == "Created"
+
+                await _edit(ws, t, "le2", title="Describe me twice")
+                await asyncio.sleep(0.2)
+                assert await self._last(ws, t) == "Edited"
+
+                await _complete(ws, t, "le3")
+                await asyncio.sleep(0.2)
+                assert await self._last(ws, t) == "Completed"
+
+                await _reopen(ws, t, "le4")
+                await asyncio.sleep(0.2)
+                assert await self._last(ws, t) == "Reopened"
+
+                under = await _add(ws, "A new home", "le5")
+                await _txn(ws, "move", {"task_id": t, "parent_task_id": under, "updated_at": NOW}, "le6")
+                await asyncio.sleep(0.2)
+                assert await self._last(ws, t) == f"Moved under {under}"
+
+                await _txn(ws, "move", {"task_id": t, "parent_task_id": "__top__", "updated_at": NOW}, "le7")
+                await asyncio.sleep(0.2)
+                assert await self._last(ws, t) == "Moved to the top level"
+
+    async def test_a_split_describes_both_sides(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Splitter", "ls1")
+                await _split(ws, parent, "Split off piece", "ls2")
+                await asyncio.sleep(0.3)
+                child = (await _snapshot(ws, "sls1"))["Split off piece"]["task_id"]
+                assert await self._last(ws, child) == f"Split from {parent}"
+                assert await self._last(ws, parent) == "Split into Split off piece"
+
+    async def test_a_reference_names_its_kind(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Collector", "lr1")
+                await _add_ref(ws, t, "lr2", kind="url", href="https://example.com", label="Example")
+                await asyncio.sleep(0.3)
+                assert await self._last(ws, t) == "Added a URL: Example"
+                await _add_ref(ws, t, "lr3", kind="file", href="/files/abc.png",
+                               mime="image/png", label="shot.png")
+                await asyncio.sleep(0.3)
+                assert await self._last(ws, t) == "Attached a file: shot.png"
+                await _add_ref(ws, t, "lr4", kind="text", body="a pasted note")
+                await asyncio.sleep(0.3)
+                assert await self._last(ws, t) == "Added a snippet: a pasted note"
+
+    async def test_a_link_describes_both_tasks(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Link A", "ll1")
+                b = await _add(ws, "Link B", "ll2")
+                forward = WORDINGS[0]
+                await _add_ref(ws, a, "ll3", kind="task", href=b, relation=forward)
+                await asyncio.sleep(0.3)
+                assert await self._last(ws, a) == f"Linked: {forward} {b}"
+                assert (await self._last(ws, b)).startswith("Linked: ")
+                assert a in await self._last(ws, b)
+
+    async def test_a_reference_makes_a_version_of_its_task(self, server):
+        """The point of the touch: a reference change is a change to the task
+        that owns it, so it shows up in that task's recorded history."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Versioned by reference", "lv1")
+                assert await _version(ws, t) == (1, 1)
+                await _add_ref(ws, t, "lv2", kind="url", href="https://example.com", label="Site")
+                await asyncio.sleep(0.3)
+                assert await _version(ws, t) == (2, 2), "the reference did not make a version"
+                chain = await _chain(ws, "task_version_chain", {"task_id": t})
+                assert [r["last_event"] for r in chain] == ["Created", "Added a URL: Site"]
+
+                ref_id = (await _refs(ws, t))[0]["ref_id"]
+                await _txn(ws, "delete_ref", {"ref_id": ref_id}, "lv3")
+                await asyncio.sleep(0.3)
+                assert await self._last(ws, t) == "Removed a reference: Site"
+                assert await _version(ws, t) == (3, 3)
+
+    async def test_a_reference_and_its_task_step_back_together(self, server):
+        """The touch is written under the same transaction ref as the
+        reference, so it is part of the same action to undo."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Steps together", "lt1")
+                await _add_ref(ws, t, "lt2", kind="url", href="https://example.com", label="Site")
+                await asyncio.sleep(0.3)
+                ref_id = (await _refs(ws, t))[0]["ref_id"]
+                await _undo(ws, {"ref_id": ref_id}, "lt3")
+                await asyncio.sleep(0.4)
+                assert await _refs(ws, t) == []
+                assert await self._last(ws, t) == "Created", "the task kept the reference's Last Event"
+                assert await _version(ws, t) == (1, 2)
+
+    async def test_a_step_restores_the_last_event_it_lands_on(self, server):
+        """The hook does not set Last Event: an undo restores the version's
+        own, and writing one would extend the chain past the cursor and
+        discard the redo branch it just made."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Steps back", "lb1")
+                await _complete(ws, t, "lb2")
+                await asyncio.sleep(0.2)
+                assert await self._last(ws, t) == "Completed"
+                await _undo(ws, {"task_id": t}, "lb3")
+                await asyncio.sleep(0.4)
+                assert await self._last(ws, t) == "Created"
+                assert await _version(ws, t) == (1, 2), "redo was discarded"
+                await _redo(ws, {"task_id": t}, "lb4")
+                await asyncio.sleep(0.4)
+                assert await self._last(ws, t) == "Completed"
+
+
+class TestStepGuards:
+    """The refusals. Each is a way a step could leave the data describing
+    something that is no longer there, so each is refused whole rather than
+    applied in part."""
+
+    async def test_restore_refused_when_the_old_parent_is_gone(self, server):
+        """A delete is permanent, so a version recorded while the task sat
+        under it can no longer be restored."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                home = await _add(ws, "Old home", "g1")
+                mover = await _add(ws, "Mover away", "g2")
+                await _txn(ws, "move", {"task_id": mover, "parent_task_id": home,
+                                        "updated_at": NOW}, "g3")
+                await asyncio.sleep(0.2)
+                await _txn(ws, "move", {"task_id": mover, "parent_task_id": "__top__",
+                                        "updated_at": NOW}, "g4")
+                await asyncio.sleep(0.2)
+                await _txn(ws, "delete", {"task_id": home}, "g5")
+                await asyncio.sleep(0.3)
+
+                resp = await _undo(ws, {"task_id": mover}, "g6", expect="error")
+                assert "no longer exists" in resp["message"] and home in resp["message"]
+                rows = await _snapshot(ws, "sg1")
+                assert rows["Mover away"]["parent_task_id"] == "", "the move was undone anyway"
+
+    async def test_nothing_left_to_step(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Only once", "n1")
+                resp = await _redo(ws, {"task_id": t}, "n2", expect="error")
+                assert resp["message"] == "Nothing to redo"
+                await _undo(ws, {"task_id": t}, "n3")          # removes it
+                await asyncio.sleep(0.3)
+                resp = await _undo(ws, {"task_id": t}, "n4", expect="error")
+                assert resp["message"] == "Nothing to undo"
+
+    async def test_redo_restores_a_whole_cascade(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Redo parent", "rc1")
+                await _split(ws, parent, "Redo child", "rc2")
+                await asyncio.sleep(0.2)
+                await _complete(ws, parent, "rc3")
+                await asyncio.sleep(0.3)
+                await _undo(ws, {"task_id": parent}, "rc4")
+                await asyncio.sleep(0.4)
+                rows = await _snapshot(ws, "src1")
+                assert rows["Redo parent"]["status"] == "open"
+                assert rows["Redo child"]["status"] == "open"
+                await _redo(ws, {"task_id": parent}, "rc5")
+                await asyncio.sleep(0.4)
+                rows = await _snapshot(ws, "src2")
+                assert rows["Redo parent"]["status"] == "complete"
+                assert rows["Redo child"]["status"] == "complete", "the child was left behind"
+
+    async def test_a_reference_reports_its_own_cursor(self, server):
+        """`ref_version_state` is what tells mkui whether a reference has a
+        redo to offer, including once it has been undone out of existence."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                t = await _add(ws, "Cursor holder", "rs1")
+                await _add_ref(ws, t, "rs2", kind="url", href="https://example.com", label="Site")
+                await asyncio.sleep(0.3)
+                ref_id = (await _refs(ws, t))[0]["ref_id"]
+                state = (await _request(ws, "ref_version_state", {"ref_id": ref_id}))[0]
+                assert (state["current"], state["top"]) == (1, 1)
+                await _undo(ws, {"ref_id": ref_id}, "rs3")
+                await asyncio.sleep(0.4)
+                state = (await _request(ws, "ref_version_state", {"ref_id": ref_id}))[0]
+                assert (state["current"], state["top"]) == (None, 1), "redo would not be offered"
+
+    async def test_a_link_is_recorded_on_both_tasks(self, server):
+        """A link is two rows and two events: the task on the far side of one
+        has had something happen to it as much as the near side."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Near side", "bl1")
+                b = await _add(ws, "Far side", "bl2")
+                await _add_ref(ws, a, "bl3", kind="task", href=b, relation=WORDINGS[0])
+                await asyncio.sleep(0.3)
+                assert await _actions(ws, a) == ["created", "ref_added"]
+                assert await _actions(ws, b) == ["created", "ref_added"]
+
+    async def test_a_survivor_records_the_link_a_delete_took(self, server):
+        """Deleting a task removes the links pointing into it. The task that
+        survives lost a reference, and says so — its own events are not the
+        deleted task's, so they stay."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                keeper = await _add(ws, "Keeper", "sv1")
+                doomed = await _add(ws, "Doomed", "sv2")
+                await _add_ref(ws, keeper, "sv3", kind="task", href=doomed, relation=WORDINGS[0])
+                await asyncio.sleep(0.3)
+                await _txn(ws, "delete", {"task_id": doomed}, "sv4")
+                await asyncio.sleep(0.4)
+                assert await _actions(ws, keeper) == ["created", "ref_added", "ref_deleted"]
+                assert await _activity(ws, doomed) == []
+                assert await _refs(ws, keeper) == []
+                last = (await _snapshot(ws, "ssv1"))["Keeper"]["last_event"]
+                assert last.startswith("Removed a reference")
+
+
+class TestUpgrade:
+    """A database made before versioning must carry over. mkio adds the
+    counter and the history tables and records a `baseline` version for
+    every existing row, which is what an undo of a first edit steps onto —
+    without it, a row that predates the feature could never be stepped
+    back. The README promises this; this is what holds it."""
+
+    def _pre_history_db(self, tmp_path):
+        """A database shaped the way 0.7.0 left one: no `_mkio_version`, no
+        history tables, no `task_events`, no `last_event`. Built from the
+        current config minus what 0.8.0 added, so it stays in step."""
+        import sqlite3
+        import tomllib
+        cfg = tomllib.loads((__import__("pathlib").Path(__file__).resolve().parent.parent
+                             / "mktask" / "mktask.toml").read_text())
+        db = tmp_path / "old.db"
+        con = sqlite3.connect(db)
+        for name in ("tasks", "task_refs", "relations", "counters"):
+            cols = dict(cfg["tables"][name]["columns"])
+            cols.pop("last_event", None)
+            con.execute(f"CREATE TABLE {name} ({', '.join(f'{c} {d}' for c, d in cols.items())})")
+        con.execute("INSERT INTO tasks (task_id, title, importance, urgency) "
+                    "VALUES ('TKMA00000001', 'Made before history', 5, 3)")
+        con.execute("INSERT INTO task_refs (task_id, kind, href, label) "
+                    "VALUES ('TKMA00000001', 'url', 'https://old.example', 'old link')")
+        con.execute("INSERT INTO counters (name, last) VALUES ('task', 1)")
+        con.commit()
+        con.close()
+        return db
+
+    def test_a_pre_history_database_carries_over(self, tmp_path):
+        db = self._pre_history_db(tmp_path)
+        proc, base = _start("--user", "mark", db=str(db))
+        try:
+            asyncio.run(self._carries_over(base))
+        finally:
+            _stop(proc)
+
+    async def _carries_over(self, base):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(base + "/ws") as ws:
+                rows = await _snapshot(ws, "up1")
+                task = rows["Made before history"]
+                assert task["_mkio_version"] == 1, "no cursor on a row that predates versioning"
+                assert task["last_event"] == "", "a row from before has no event to name"
+
+                chain = await _chain(ws, "task_version_chain", {"task_id": task["task_id"]})
+                assert [c["_mkio_op"] for c in chain] == ["baseline"]
+                refs = await _refs(ws, task["task_id"])
+                assert [r["label"] for r in refs] == ["old link"]
+
+                # The point of the baseline: the first edit is undoable.
+                await _edit(ws, task["task_id"], "up2", title="Edited after upgrading",
+                            importance=5, urgency=3)
+                await asyncio.sleep(0.3)
+                assert "Edited after upgrading" in await _snapshot(ws, "up3")
+                await _undo(ws, {"task_id": task["task_id"]}, "up4")
+                await asyncio.sleep(0.4)
+                back = await _snapshot(ws, "up5")
+                assert "Made before history" in back, "nothing to step back onto"
+                assert back["Made before history"]["_mkio_version"] == 1
+
+                # And the Task ID counter picks up where it left off.
+                new_id = await _add(ws, "Made after upgrading", "up6")
+                assert new_id == "TKMA00000002"

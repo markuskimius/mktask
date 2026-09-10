@@ -11,9 +11,39 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from mkio.history import (
+    HISTORY_META_COLUMNS,
+    VERSION_COLUMN,
+    base_table_name,
+    history_table_name,
+    is_history_table,
+    primary_key_columns,
+    source_columns,
+)
 
 PKG = Path(__file__).resolve().parent.parent / "mktask"
 STATIC = PKG / "static"
+
+#: Ops TaskTransactions implements itself, with no steps in the TOML: each
+#: expands to mkio's per-row cursor moves over every row one action wrote.
+SERVICE_OPS = {"undo_action", "redo_action"}
+
+#: The keys mkui's parseHistorySpec understands in a pane's `history` block.
+#: It drops an unknown one with a console warning rather than failing, so a
+#: typo would only ever show up here.
+HISTORY_KEYS = {
+    "table", "key", "versions", "state", "feed", "asOf", "undo", "redo",
+    "columns", "fields", "confirm",
+}
+
+#: Actions mkui registers that a button or menu item may fire.
+MKUI_ACTIONS = {
+    "pane.show", "layout.save", "layout.restore", "layout.reset", "layout.refresh",
+    "window.tileH", "window.tileV", "window.grid", "window.cascade",
+    "edit.copy", "edit.selectAll", "edit.find", "edit.undo", "edit.redo",
+    "table.filter", "table.sort", "table.columns", "table.link", "table.expand",
+    "table.select", "table.history", "auth.logout",
+}
 
 
 @pytest.fixture(scope="module")
@@ -70,6 +100,8 @@ def test_services_exist(app_config, server_config):
         if "service" in node and "op" in node:
             svc = services.get(node["service"])
             assert svc is not None, f"unknown service {node['service']}"
+            if node["op"] in SERVICE_OPS:
+                continue
             assert node["op"] in svc["ops"], f"service {node['service']} has no op {node['op']}"
 
 
@@ -77,7 +109,7 @@ def test_transaction_fields_are_declared(app_config, server_config):
     """Every field a dialog or button sends must be one the op accepts."""
     services = server_config["services"]
     for node in _walk(app_config["panes"]):
-        if not ("service" in node and "op" in node):
+        if not ("service" in node and "op" in node) or node["op"] in SERVICE_OPS:
             continue
         ops = services[node["service"]]["ops"][node["op"]]
         allowed = set()
@@ -129,10 +161,25 @@ def _table_panes(app_config):
     return [(pid, p) for pid, p in app_config["panes"].items() if p.get("type") == "mkio-table"]
 
 
+def _table_columns(table, server_config) -> set:
+    """Every column a table returns, mkio's own included.
+
+    A `versioned = true` table carries `_mkio_version` (the cursor into its
+    recorded versions) beside the `_mkio_ref` every table gets. A history
+    table is not in the config at all — mkio derives it — so its columns are
+    the metadata it prepends plus the base table's own.
+    """
+    if is_history_table(table):
+        base = server_config["tables"][base_table_name(table)]
+        return set(HISTORY_META_COLUMNS) | set(source_columns(base)) | {"_mkio_ref"}
+    spec = server_config["tables"][table]
+    known = set(spec["columns"]) | {"_mkio_ref"}
+    return known | {VERSION_COLUMN} if spec.get("versioned") else known
+
+
 def _columns_of(pane, server_config) -> set:
     """The columns a pane's query returns: its service's primary table."""
-    table = server_config["services"][pane["service"]]["primary_table"]
-    return set(server_config["tables"][table]["columns"])
+    return _table_columns(server_config["services"][pane["service"]]["primary_table"], server_config)
 
 
 def _pane_columns(pane, table_columns):
@@ -433,6 +480,11 @@ def test_every_lookup_service_is_used_and_exists(app_config, server_config):
     wanted = set(re.findall(r'request\("([a-z_]+)"', js))
     wanted |= {n.get("optionsFrom", {}).get("service") for n in _walk(app_config["panes"])
                if isinstance(n, dict) and "optionsFrom" in n}
+    # mkui asks a pane's `history` services itself: `versions` for what a
+    # step is about to change, `state` for whether a redo is there to offer.
+    for _, pane in _table_panes(app_config):
+        hist = pane.get("history", {})
+        wanted |= {hist.get("versions"), hist.get("state")}
     wanted.discard(None)
     reqreps = {name for name, svc in server_config["services"].items() if svc["protocol"] == "reqrep"}
     mkui_owned = {n for n in reqreps if n.startswith("mkui_")}  # mkui's layout store calls these itself
@@ -791,7 +843,7 @@ def test_every_transaction_field_has_default_or_is_sent(app_config, server_confi
     """A field without a default is required by mkio: the UI must send it."""
     services = server_config["services"]
     for node in _walk(app_config["panes"]):
-        if not ("service" in node and "op" in node):
+        if not ("service" in node and "op" in node) or node["op"] in SERVICE_OPS:
             continue
         ops = services[node["service"]]["ops"][node["op"]]
         sent = set(node.get("data", {}))
@@ -803,3 +855,105 @@ def test_every_transaction_field_has_default_or_is_sent(app_config, server_confi
             required = set(op.get("fields", [])) | set(op.get("key", []))
             required -= set(op.get("defaults", {}))
             assert required <= sent, f"{node['service']}.{node['op']} misses {required - sent}"
+
+
+# ─── Recorded versions ─────────────────────────────────────────────
+
+def test_history_blocks_are_well_formed(app_config, server_config):
+    """A pane's `history` block is what mkui needs to show a record's
+    versions and to step it. mkui drops a key it does not know with a
+    console warning rather than failing, so this is the only thing that
+    catches a typo in one.
+    """
+    services, tables = server_config["services"], server_config["tables"]
+    seen = 0
+    for pane_id, pane in _table_panes(app_config):
+        hist = pane.get("history")
+        if hist is None:
+            continue
+        seen += 1
+        assert set(hist) <= HISTORY_KEYS, f"{pane_id}.history has unknown {set(hist) - HISTORY_KEYS}"
+
+        table = hist["table"]
+        assert tables.get(table, {}).get("versioned"), f"{pane_id}.history.table {table} is not versioned"
+        assert hist["key"] == primary_key_columns(tables[table]), \
+            f"{pane_id}.history.key is not {table}'s primary key"
+
+        # The pane shows the versions of the records it lists, not another
+        # table's, so the two must agree on what a record is.
+        assert services[pane["service"]]["primary_table"] == table, \
+            f"{pane_id} lists {services[pane['service']]['primary_table']} but records {table}"
+
+        feed = services[hist["feed"]]
+        assert feed["protocol"] == "query", f"{pane_id}.history.feed must be a query"
+        assert feed["primary_table"] == history_table_name(table)
+        assert set(hist["key"]) <= set(feed.get("filterable", [])), \
+            f"{hist['feed']} cannot be narrowed to one record"
+
+        for name in ("versions", "state"):
+            if name in hist:
+                assert services[hist[name]]["protocol"] == "reqrep", f"{pane_id}.history.{name}"
+
+        known = _table_columns(table, server_config)
+        for col in hist.get("columns", []):
+            assert col in known, f"{pane_id}.history.columns names unknown column {col}"
+
+        for direction in ("undo", "redo"):
+            step = hist.get(direction)
+            if step is None:
+                continue
+            assert step["service"] in services, f"{pane_id}.history.{direction} unknown service"
+            assert "ops" in services[step["service"]], \
+                f"{pane_id}.history.{direction} names {step['service']}, which runs no ops"
+            assert step["op"] in SERVICE_OPS, \
+                f"{pane_id}.history.{direction} should step a whole action, not one row"
+    assert seen == 2, "the Tasks and References panes both record versions"
+
+
+def test_version_column_shows_only_where_a_pane_asks(app_config, server_config):
+    """`_mkio_version` is mkio's, and mkui shows it only when a pane names
+    it — so a pane that shows one must be recording versions to show."""
+    for pane_id, pane in _table_panes(app_config):
+        if VERSION_COLUMN in pane.get("columns", []):
+            assert "history" in pane, f"{pane_id} shows a version but has no history block"
+
+
+def test_actions_name_actions_mkui_registers(app_config):
+    """A button firing an action mkui never registered does nothing at all,
+    silently. The names are few and fixed, so they can simply be listed."""
+    seen = 0
+    for node in _walk(app_config["panes"]):
+        action = node.get("action")
+        if isinstance(action, dict) and action.get("type") == "action":
+            seen += 1
+            assert action["name"] in MKUI_ACTIONS, f"unknown action {action['name']}"
+            pane = (action.get("args") or {}).get("pane") if isinstance(action.get("args"), dict) else None
+            if pane is not None:
+                assert pane in app_config["panes"], f"action targets unknown pane {pane}"
+    for item in _walk(app_config["menubar"]):
+        if isinstance(item.get("action"), str):
+            seen += 1
+            assert item["action"] in MKUI_ACTIONS, f"unknown menu action {item['action']}"
+    # refs.js fires its own, and they go stale the same way.
+    js = (STATIC / "refs.js").read_text()
+    for name in set(re.findall(r'fireAction\("([a-z.]+)"', js)):
+        seen += 1
+        assert name in MKUI_ACTIONS, f"refs.js fires unknown action {name}"
+    assert seen > 10
+
+
+def test_delete_dialogs_say_it_cannot_be_undone(app_config):
+    """Everything else on a pane that records versions steps back; a delete
+    does not, because mkio drops a row's history with the row. The one place
+    that asymmetry has to be stated is where the user is about to do it."""
+    found = 0
+    for pane_id, pane in _table_panes(app_config):
+        if "history" not in pane:
+            continue
+        for button in pane.get("buttons", []):
+            if button["label"] != "Delete":
+                continue
+            found += 1
+            text = json.dumps(button["action"]["dialog"]["fields"])
+            assert "cannot be undone" in text, f"{pane_id}'s Delete does not say it is permanent"
+    assert found >= 2, "the Tasks and References panes both delete"

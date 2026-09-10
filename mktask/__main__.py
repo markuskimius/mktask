@@ -59,6 +59,7 @@ def serve(
     cfg.setdefault("static", {})[FILES_ROUTE.rstrip("/")] = str(files)
     if "tasks" in cfg.get("services", {}):
         cfg["services"]["tasks"]["prefix"] = user_prefix(user)
+        cfg["services"]["tasks"]["user"] = user
         cfg["services"]["tasks"]["files_dir"] = str(files)
 
     # Probe the port before anything else starts: a bind failure inside
@@ -71,7 +72,16 @@ def serve(
     async def announce() -> None:
         print(_banner(cfg, config, user, files), flush=True)
 
+    async def undo_redo(event: Any) -> None:
+        # Registered before start(), which is when on_undo_redo insists on
+        # being called — so the service is looked up per event rather than
+        # captured: app.services is empty until the server is running.
+        service = app.services.get("tasks")
+        if service is not None:
+            await service.undo_redo_hook(event)
+
     app.on_startup(announce)
+    app.on_undo_redo(undo_redo)
     app.run()
 
 

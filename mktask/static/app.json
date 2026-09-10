@@ -32,6 +32,11 @@
           "args": "references"
         },
         {
+          "label": "Activity",
+          "action": "pane.show",
+          "args": "activity"
+        },
+        {
           "label": "Relations",
           "action": "pane.show",
           "args": "relations"
@@ -86,6 +91,17 @@
     {
       "label": "Edit",
       "items": [
+        {
+          "label": "Undo",
+          "action": "edit.undo"
+        },
+        {
+          "label": "Redo",
+          "action": "edit.redo"
+        },
+        {
+          "sep": true
+        },
         {
           "label": "Copy",
           "action": "edit.copy",
@@ -188,7 +204,9 @@
         "urgency",
         "due",
         "status",
-        "created_at"
+        "last_event",
+        "created_at",
+        "_mkio_version"
       ],
       "labels": {
         "task_id": "Task ID",
@@ -198,7 +216,8 @@
         "urgency": "Urg",
         "due": "Due",
         "status": "Status",
-        "created_at": "Created"
+        "created_at": "Created",
+        "last_event": "Last Event"
       },
       "values": {
         "score": "importance * urgency"
@@ -762,6 +781,20 @@
           }
         },
         {
+          "label": "History",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "action",
+            "name": "table.history",
+            "args": {
+              "pane": "tasks"
+            }
+          }
+        },
+        {
           "label": "Complete",
           "enable": {
             "connected": true,
@@ -814,7 +847,7 @@
             "dialog": {
               "title": "Delete Task ID ${row.task_id}",
               "modal": true,
-              "width": 380,
+              "width": 460,
               "fields": [
                 {
                   "name": "task_id",
@@ -825,6 +858,11 @@
                   "label": "Delete this task and every task split from it?",
                   "type": "readonly",
                   "value": "${row.title}"
+                },
+                {
+                  "label": "This is permanent.",
+                  "type": "readonly",
+                  "value": "The task, everything split from it, their references and all their history are deleted. This cannot be undone."
                 }
               ],
               "submit": {
@@ -841,6 +879,34 @@
           "task_id": "task_id"
         },
         "chips": false
+      },
+      "history": {
+        "table": "tasks",
+        "key": [
+          "task_id"
+        ],
+        "feed": "task_versions",
+        "versions": "task_version_chain",
+        "state": "task_version_state",
+        "columns": [
+          "title",
+          "notes",
+          "status",
+          "importance",
+          "urgency",
+          "due",
+          "parent_task_id",
+          "last_event"
+        ],
+        "undo": {
+          "service": "tasks",
+          "op": "undo_action"
+        },
+        "redo": {
+          "service": "tasks",
+          "op": "redo_action"
+        },
+        "confirm": true
       }
     },
     "task-detail": {
@@ -877,7 +943,8 @@
         "kind",
         "relation",
         "label",
-        "created_at"
+        "created_at",
+        "_mkio_version"
       ],
       "labels": {
         "task_id": "Task ID",
@@ -997,6 +1064,20 @@
           }
         },
         {
+          "label": "History",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "action",
+            "name": "table.history",
+            "args": {
+              "pane": "references"
+            }
+          }
+        },
+        {
           "label": "Delete",
           "unit": "row",
           "enable": {
@@ -1014,7 +1095,7 @@
             "dialog": {
               "title": "Delete Reference",
               "modal": true,
-              "width": 380,
+              "width": 460,
               "fields": [
                 {
                   "name": "ref_id",
@@ -1025,6 +1106,11 @@
                   "label": "Remove this reference from Task ID ${row.task_id}? A task link is removed from both tasks.",
                   "type": "readonly",
                   "value": "${row.label}"
+                },
+                {
+                  "label": "This is permanent.",
+                  "type": "readonly",
+                  "value": "The reference and all its history are deleted. This cannot be undone."
                 }
               ],
               "submit": {
@@ -1041,6 +1127,33 @@
           "task_id": "task_id"
         },
         "chips": false
+      },
+      "history": {
+        "table": "task_refs",
+        "key": [
+          "ref_id"
+        ],
+        "feed": "ref_versions",
+        "versions": "ref_version_chain",
+        "state": "ref_version_state",
+        "columns": [
+          "kind",
+          "relation",
+          "label",
+          "href",
+          "body",
+          "mime",
+          "task_id"
+        ],
+        "undo": {
+          "service": "tasks",
+          "op": "undo_action"
+        },
+        "redo": {
+          "service": "tasks",
+          "op": "redo_action"
+        },
+        "confirm": true
       }
     },
     "relations": {
@@ -1202,6 +1315,35 @@
           }
         }
       ]
+    },
+    "activity": {
+      "title": "Activity",
+      "type": "mkio-table",
+      "service": "task_activity",
+      "protocol": "query",
+      "columns": [
+        "at",
+        "action",
+        "detail",
+        "task_id",
+        "actor"
+      ],
+      "labels": {
+        "at": "When",
+        "action": "Action",
+        "detail": "Detail",
+        "task_id": "Task ID",
+        "actor": "By"
+      },
+      "sort": [
+        "-event_id"
+      ],
+      "link": {
+        "listen": {
+          "task_id": "task_id"
+        },
+        "chips": false
+      }
     }
   },
   "frames": [
