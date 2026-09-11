@@ -12,15 +12,17 @@ auto_migrate = true
 # the TaskTransactions service. parent_task_id is '' for a top-level task and
 # the parent's task_id for a task made by splitting. importance/urgency are
 # 1..5; the UI derives a score from them (placeholder for the real
-# prioritization model). Timestamps are UTC "YYYY-MM-DD HH:MM:SS" to match
-# SQLite's CURRENT_TIMESTAMP.
+# prioritization model). assigned_to is a name from the assignees table,
+# stored as the name itself rather than an id: retiring a name leaves every
+# task that carries it untouched. Timestamps are UTC "YYYY-MM-DD HH:MM:SS"
+# to match SQLite's CURRENT_TIMESTAMP.
 #
 # versioned: mkio keeps every version of every row in tasks__history, keyed
 # (task_id, _mkio_version), and the live row's _mkio_version is a cursor into
 # that chain. The undo/redo ops step it. A delete is a real delete: the row
 # goes and its history goes with it.
 [tables.tasks]
-columns = { task_id = "TEXT PRIMARY KEY", parent_task_id = "TEXT NOT NULL DEFAULT ''", title = "TEXT NOT NULL", notes = "TEXT NOT NULL DEFAULT ''", status = "TEXT NOT NULL DEFAULT 'open'", importance = "INTEGER NOT NULL DEFAULT 3", urgency = "INTEGER NOT NULL DEFAULT 3", due = "TEXT NOT NULL DEFAULT ''", last_event = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", completed_at = "TEXT NOT NULL DEFAULT ''" }
+columns = { task_id = "TEXT PRIMARY KEY", parent_task_id = "TEXT NOT NULL DEFAULT ''", title = "TEXT NOT NULL", notes = "TEXT NOT NULL DEFAULT ''", status = "TEXT NOT NULL DEFAULT 'open'", importance = "INTEGER NOT NULL DEFAULT 3", urgency = "INTEGER NOT NULL DEFAULT 3", due = "TEXT NOT NULL DEFAULT ''", assigned_to = "TEXT NOT NULL DEFAULT ''", last_event = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", completed_at = "TEXT NOT NULL DEFAULT ''" }
 versioned = true
 
 # One row per reference: something a task points at. kind is "url" (href =
@@ -48,6 +50,17 @@ versioned = true
 [tables.relations]
 columns = { relation_id = "INTEGER PRIMARY KEY AUTOINCREMENT", forward = "TEXT NOT NULL", backward = "TEXT NOT NULL DEFAULT ''", notes = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
 seed = "relations.json"
+
+# The names the Assigned To picker offers, one row per name. Unique across
+# the table, case-insensitively (TaskTransactions enforces it, as it does
+# for relations). tasks.assigned_to stores the name itself, so this table
+# is the dropdown and nothing else: a name typed into the picker is added
+# here in the same transaction as the task, and deleting a name takes it
+# out of the dropdown while every task already assigned to it keeps it.
+# Renaming, for the same reason, rewrites no task. Starts empty — the
+# first names come from the picker.
+[tables.assignees]
+columns = { assignee_id = "INTEGER PRIMARY KEY AUTOINCREMENT", name = "TEXT NOT NULL", notes = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
 
 # What happened to a task, one row per event: created, split_from / split_to,
 # edited, moved, completed, reopened, ref_added / ref_edited / ref_deleted, and
@@ -85,7 +98,10 @@ columns = { id = "INTEGER PRIMARY KEY AUTOINCREMENT", app = "TEXT NOT NULL DEFAU
 # task (`relabel_ref`), and a task delete takes the subtree's references
 # with it. The `*_relation` ops manage the relations table: a rename
 # rewrites the wording on every link (`reword_ref`); a delete is refused
-# while links use the relation. `move` re-parents one task (its subtree
+# while links use the relation. The `*_assignee` ops manage the assignees
+# table, the Assigned To dropdown: neither a rename nor a delete touches a
+# task, so a task keeps the name it was given whatever becomes of the
+# list. `move` re-parents one task (its subtree
 # comes along): it refuses a cycle and a move that would put a task link
 # inside one tree, and reopens complete new ancestors.
 [services.tasks]
@@ -95,14 +111,16 @@ description = "Add, split, edit, complete, reopen, and delete tasks"
 [services.tasks.ops]
 add = [
     { table = "counters", op_type = "upsert", key = ["name"], fields = ["last"], defaults = { name = "task", last = 0 } },
-    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due", "last_event"], defaults = { task_id = "", parent_task_id = "", notes = "", importance = 3, urgency = 3, due = "", last_event = "" } },
+    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due", "assigned_to", "last_event"], defaults = { task_id = "", parent_task_id = "", notes = "", importance = 3, urgency = 3, due = "", assigned_to = "", last_event = "" } },
 ]
 split = [
     { table = "counters", op_type = "upsert", key = ["name"], fields = ["last"], defaults = { name = "task", last = 0 } },
-    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due", "last_event"], defaults = { task_id = "", notes = "", importance = 3, urgency = 3, due = "", last_event = "" } },
+    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due", "assigned_to", "last_event"], defaults = { task_id = "", notes = "", importance = 3, urgency = 3, due = "", assigned_to = "", last_event = "" } },
 ]
+# `assigned_to` has no default here on purpose: an edit that left it out
+# would take the column's own default and quietly unassign the task.
 edit = [
-    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["title", "notes", "importance", "urgency", "due", "updated_at", "last_event"], defaults = { last_event = "" } },
+    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["title", "notes", "importance", "urgency", "due", "assigned_to", "updated_at", "last_event"], defaults = { last_event = "" } },
 ]
 move = [
     { table = "tasks", op_type = "update", key = ["task_id"], fields = ["parent_task_id", "updated_at", "last_event"], defaults = { last_event = "" } },
@@ -139,6 +157,20 @@ edit_relation = [
 ]
 delete_relation = [
     { table = "relations", op_type = "delete", key = ["relation_id"] },
+]
+# The Assigned To dropdown. `add_assignee` is a request of its own and a
+# step inside `add`, `split` and `edit`: a name typed into the picker is a
+# name the list did not hold, and it joins the list in the same transaction
+# as the task it was typed on. Nothing here touches `tasks` — a rename
+# leaves every task on the old name, the way a delete does.
+add_assignee = [
+    { table = "assignees", op_type = "insert", fields = ["name", "notes"], defaults = { notes = "" } },
+]
+edit_assignee = [
+    { table = "assignees", op_type = "update", key = ["assignee_id"], fields = ["name", "notes", "updated_at"], defaults = { notes = "" } },
+]
+delete_assignee = [
+    { table = "assignees", op_type = "delete", key = ["assignee_id"] },
 ]
 # One narrative row. Always filled in by TaskTransactions, never bound with
 # `bind`: a bind's "$N.field" is an absolute position in the request's op
@@ -185,6 +217,11 @@ filterable = ["task_id", "kind", "relation"]
 protocol = "query"
 description = "Every relation pair, live"
 primary_table = "relations"
+
+[services.all_assignees]
+protocol = "query"
+description = "Every name the Assigned To picker offers, live"
+primary_table = "assignees"
 
 # What happened to a task, live. The Activity pane subscribes, following the
 # Tasks selection through table linking the way the References pane does.
@@ -248,6 +285,46 @@ SELECT (SELECT _mkio_version FROM task_refs WHERE ref_id = :ref_id) AS current,
 protocol = "reqrep"
 description = "Every relation wording, as value/label pairs for a dialog select"
 sql = "SELECT forward AS value, forward AS label FROM relations UNION SELECT backward, backward FROM relations ORDER BY 1"
+
+# The Assigned To picker: "__new__", the box a new name is typed into,
+# then every name in alphabetical order. Unassigned is not a row here —
+# mkui's optionsFrom prepends a blank entry of its own that cannot be
+# removed or preselected past, and *that* is what unassigned is. So the
+# picker needs one sentinel, not two, and a task with nobody on it lands on
+# the blank by itself: an empty `assigned_to` selects the first option,
+# which is the one mkui put there.
+[services.assignee_options]
+protocol = "reqrep"
+description = "Every assignee name, as value/label pairs for a dialog select"
+sql = """
+SELECT value, label FROM (
+    SELECT 0 AS ord, '__new__' AS value, '\u2014 New name \u2014' AS label
+    UNION ALL
+    SELECT 1, name, name FROM assignees
+)
+ORDER BY ord, label
+"""
+
+# The same picker, for a dialog that opens on a task: its own name joins
+# the list. This is not a nicety — the blank means *unassigned* now, so a
+# name missing from the options would fall to the blank and saving would
+# quietly clear it. A name taken off the list is exactly that case, and
+# this is what keeps it on offer where it is still in use. It needs a
+# service of its own because a param resolving to '' empties an optionsFrom
+# list altogether, and the New dialog has no task to name.
+[services.task_assignee_options]
+protocol = "reqrep"
+description = "Every assignee name plus the given task's own, as value/label pairs for a dialog select"
+sql = """
+SELECT value, label FROM (
+    SELECT 0 AS ord, '__new__' AS value, '\u2014 New name \u2014' AS label
+    UNION
+    SELECT 1, name, name FROM assignees
+    UNION
+    SELECT 1, assigned_to, assigned_to FROM tasks WHERE task_id = :task_id AND assigned_to != ''
+)
+ORDER BY ord, label
+"""
 
 # The Link dialog's task picker: open tasks outside the given task's tree.
 # Splitting already relates a task to its ancestors, descendants, and every

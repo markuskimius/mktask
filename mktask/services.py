@@ -25,6 +25,11 @@ writes and adds what a config cannot express:
   a link. `edit_ref` refuses a task link (its label follows the linked
   task) and keeps a file's href. `edit` on a task relabels every link that
   points at it.
+- The Assigned To dropdown is a list of its own (`assignees`), managed by
+  `add_assignee` / `edit_assignee` / `delete_assignee` — and grown by
+  `add`, `split` and `edit`, which add a name typed into the picker that
+  the list does not hold yet. Nothing here reaches into `tasks`: a task
+  keeps the name it was given whatever later becomes of the list.
 - Every op also writes the narrative to `task_events`: what happened, to
   which task, in the same transaction as the change itself.
 
@@ -75,6 +80,11 @@ _VERSIONED = {
     "task_refs": ("ref_id", "undo_ref", "redo_ref"),
 }
 TOP_LEVEL = "__top__"  # the Move picker's "top level"; see move_options in mktask.toml
+#: The Assigned To picker's one sentinel: "let me type a name". Unassigned
+#: needs none — it is mkui's own blank entry, which submits as ''. The
+#: dialog maps this before it submits; the service maps it again, so the
+#: sentinel can never reach the column.
+NEW_ASSIGNEE = "__new__"
 SEED_RELATIONS = Path(__file__).with_name("relations.json")  # what a new database starts with
 FILES_ROUTE = "/files/"
 _LABEL_MAX = 80
@@ -160,6 +170,7 @@ class TaskTransactions(TransactionService):
     TREE_OPS = ("edit", "move")
     REF_OPS = ("add_ref", "edit_ref", "delete_ref")
     RELATION_OPS = ("add_relation", "edit_relation", "delete_relation")
+    ASSIGNEE_OPS = ("add_assignee", "edit_assignee", "delete_assignee")
     STEP_OPS = ("undo_action", "redo_action")
 
     def __init__(self, **kwargs: Any) -> None:
@@ -207,7 +218,7 @@ class TaskTransactions(TransactionService):
             return await self._guarded(ws, {**msg, "data": data}, op, data)
 
         if (op in self.CASCADE_OPS or op in self.REF_OPS or op in self.RELATION_OPS
-                or op in self.TREE_OPS or op in self.STEP_OPS):
+                or op in self.ASSIGNEE_OPS or op in self.TREE_OPS or op in self.STEP_OPS):
             return await self._guarded(ws, msg, op, data)
 
         return await super().on_message(ws, msg)
@@ -272,16 +283,22 @@ class TaskTransactions(TransactionService):
 
     async def _submit(
         self, op: str, rows: list[dict[str, Any]], data: dict[str, Any], ref: str | None,
-        events: Any = (), wrote: Any = (),
+        events: Any = (), wrote: Any = (), extra: tuple = ((), ()),
     ) -> dict[str, Any]:
         """One transaction over every row, plus its narrative. Right for
         inserts and updates, whose RETURNING rows are what the change bus
-        announces."""
+        announces.
+
+        `extra` is a second op's steps riding along in the same transaction
+        — the `add_assignee` a newly typed name needs.
+        """
         ops, params = self._steps(op, rows)
+        x_ops, x_params = extra
         e_ops, e_params = self._event_steps(events)
         t_ops, t_params = self._touch_steps(events, wrote)
         return await self.writer.submit(
-            ops + t_ops + e_ops, params + t_params + e_params, data, ref=ref
+            ops + tuple(x_ops) + t_ops + e_ops,
+            params + tuple(x_params) + t_params + e_params, data, ref=ref
         )
 
     async def _submit_each(
@@ -323,10 +340,11 @@ class TaskTransactions(TransactionService):
         return [{**base, "task_id": e["task_id"], "last_event": e["last_event"]} for e in events]
 
     async def _op_add(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        data, *assignee = await self._assignee_steps(data)
         events = [self._event(data["task_id"], "created", data.get("title", ""))]
         return await self._submit(
             "add", self._rows_for(events, data), data, ref,
-            events=events, wrote={data["task_id"]},
+            events=events, wrote={data["task_id"]}, extra=tuple(assignee),
         )
 
     async def _op_split(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
@@ -335,6 +353,13 @@ class TaskTransactions(TransactionService):
         The parent's row is not otherwise written, so its half is a touch —
         which is how a split shows up in the parent's own history too.
         """
+        # The parent's name is what the picker opens on, so inheriting it is
+        # not typing it: a name taken off the list stays off when a task
+        # carrying it is split.
+        was = await self._task(data["parent_task_id"])
+        data, *assignee = await self._assignee_steps(
+            data, previous=(was or {}).get("assigned_to", "")
+        )
         task_id, parent = data["task_id"], data["parent_task_id"]
         events = [
             self._event(task_id, "split_from", parent),
@@ -342,7 +367,7 @@ class TaskTransactions(TransactionService):
         ]
         return await self._submit(
             "split", self._rows_for(events[:1], data), data, ref,
-            events=events, wrote={task_id},
+            events=events, wrote={task_id}, extra=tuple(assignee),
         )
 
     async def _op_complete(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
@@ -420,11 +445,17 @@ class TaskTransactions(TransactionService):
 
     async def _op_edit(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
         """A plain update, plus a relabel of every link that points at this task."""
+        was = await self._task(data["task_id"])
+        data, a_ops, a_params = await self._assignee_steps(
+            data, previous=(was or {}).get("assigned_to", "")
+        )
         event = self._event(data["task_id"], "edited", data.get("title", ""))
         compiled = self._resolve_ops({"op": "edit"})
         ops = list(compiled)
         params = [_extract_params(step, {**data, "last_event": event["last_event"]})
                   for step in compiled]
+        ops.extend(a_ops)
+        params.extend(a_params)
         if "title" in data:
             r_ops, r_params = await self._relabel_steps(data["task_id"], data["title"])
             ops.extend(r_ops)
@@ -900,6 +931,82 @@ class TaskTransactions(TransactionService):
 
     async def _relation(self, relation_id: Any) -> dict[str, Any] | None:
         rows = await self.db.read("SELECT * FROM relations WHERE relation_id = ?", (relation_id,))
+        return dict(rows[0]) if rows else None
+
+    # ── Assignees ─────────────────────────────────────────────────────
+
+    async def _assignee_steps(
+        self, data: dict[str, Any], previous: str | None = None,
+    ) -> tuple[dict[str, Any], tuple, tuple]:
+        """`data` with `assigned_to` settled, and the steps adding a name the
+        dropdown does not hold yet.
+
+        Typing a name into the Assigned To picker is what puts it in the
+        dropdown, so a name the list does not know joins it in the same
+        transaction as the task it was typed on. Only a name this write
+        *changes*: a name deleted from the list stays on the tasks that
+        carry it, and an edit of one of those — a new title, a new due date
+        — must not put it back on the list behind the user's back. A name
+        the list already holds needs nothing, and its spelling wins, so
+        "alice" typed over "Alice" is the same person, not a second entry
+        that reads the same.
+        """
+        if "assigned_to" not in data:
+            return data, (), ()
+        name = str(data.get("assigned_to") or "").strip()
+        if name == NEW_ASSIGNEE:
+            name = ""  # the dialog maps its own sentinel; this is the backstop
+        listed = await self._assignee(name) if name else None
+        if listed is not None:
+            name = listed["name"]
+        data = {**data, "assigned_to": name}
+        if not name or listed is not None or name == (previous or ""):
+            return data, (), ()
+        return (data, *self._steps("add_assignee", [{"name": name, "notes": ""}]))
+
+    async def _assignee(self, name: str) -> dict[str, Any] | None:
+        """The row holding a name, matched case-insensitively; None if unlisted."""
+        wanted = name.strip().lower()
+        rows = await self.db.read("SELECT * FROM assignees")
+        return next((dict(r) for r in rows if r["name"].lower() == wanted), None)
+
+    async def _assignee_data(self, data: dict[str, Any], exclude_id: Any = None) -> dict[str, Any]:
+        """A trimmed name, checked unique across the list, case-insensitively."""
+        name = str(data.get("name") or "").strip()
+        if not name:
+            raise ValueError("An assignee needs a name")
+        listed = await self._assignee(name)
+        if listed is not None and listed["assignee_id"] != exclude_id:
+            raise ValueError(f"{name!r} is already on the list ({listed['name']!r})")
+        return {**data, "name": name, "notes": str(data.get("notes") or "")}
+
+    async def _op_add_assignee(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        return await self._submit("add_assignee", [await self._assignee_data(data)], data, ref)
+
+    async def _op_edit_assignee(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        """A rename changes the dropdown and nothing else.
+
+        `tasks.assigned_to` holds the name itself, not a key into this
+        table, so a task keeps the name it was given: the list is only what
+        the picker offers next time. That is the same promise a delete
+        makes, and it is why nothing here reaches into `tasks` the way
+        `edit_relation` reaches into `task_refs`.
+        """
+        row = await self._assignee_row(data["assignee_id"])
+        if row is None:
+            raise ValueError(f"No assignee {data['assignee_id']!r}")
+        new = await self._assignee_data(data, exclude_id=row["assignee_id"])
+        return await self._submit("edit_assignee", [new], data, ref)
+
+    async def _op_delete_assignee(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        """Off the list, and that is all: every task already assigned to the
+        name keeps it, and the name simply stops being offered."""
+        return await self._submit_each(
+            "delete_assignee", [{"assignee_id": data["assignee_id"]}], ref
+        )
+
+    async def _assignee_row(self, assignee_id: Any) -> dict[str, Any] | None:
+        rows = await self.db.read("SELECT * FROM assignees WHERE assignee_id = ?", (assignee_id,))
         return dict(rows[0]) if rows else None
 
     async def _inverse(self, wording: str) -> str | None:

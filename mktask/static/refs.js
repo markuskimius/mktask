@@ -66,6 +66,7 @@ const TASK_FIELDS = [
   ["urgency", "Urgency"],
   ["score", "Score"],
   ["due", "Due"],
+  ["assigned_to", "Assigned To"],
   ["parent_task_id", "Split from"],
   ["created_at", "Created"],
   ["last_event", "Last Event"],

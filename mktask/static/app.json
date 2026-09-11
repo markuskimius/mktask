@@ -37,11 +37,6 @@
           "args": "activity"
         },
         {
-          "label": "Relations",
-          "action": "pane.show",
-          "args": "relations"
-        },
-        {
           "sep": true
         },
         {
@@ -111,6 +106,21 @@
           "label": "Select All",
           "action": "edit.selectAll",
           "shortcut": "mod+A"
+        }
+      ]
+    },
+    {
+      "label": "Configure",
+      "items": [
+        {
+          "label": "Relations",
+          "action": "pane.show",
+          "args": "relations"
+        },
+        {
+          "label": "Assignees",
+          "action": "pane.show",
+          "args": "assignees"
         }
       ]
     },
@@ -203,6 +213,7 @@
         "importance",
         "urgency",
         "due",
+        "assigned_to",
         "status",
         "last_event",
         "created_at",
@@ -217,7 +228,8 @@
         "due": "Due",
         "status": "Status",
         "created_at": "Created",
-        "last_event": "Last Event"
+        "last_event": "Last Event",
+        "assigned_to": "Assigned To"
       },
       "values": {
         "score": "importance * urgency"
@@ -367,6 +379,29 @@
                   "value": ""
                 },
                 {
+                  "name": "_assignee",
+                  "label": "Assigned To",
+                  "type": "select",
+                  "optionsFrom": {
+                    "service": "assignee_options",
+                    "value": "value",
+                    "label": "label"
+                  }
+                },
+                {
+                  "name": "_new_assignee",
+                  "label": "New name",
+                  "type": "text",
+                  "required": "_assignee == '__new__'",
+                  "showWhen": "_assignee == '__new__'",
+                  "placeholder": "A name typed here joins the list"
+                },
+                {
+                  "name": "assigned_to",
+                  "type": "hidden",
+                  "compute": "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
+                },
+                {
                   "name": "notes",
                   "label": "Notes",
                   "type": "textarea",
@@ -480,6 +515,33 @@
                   "type": "text",
                   "placeholder": "2026-12-31",
                   "value": "${row.due}"
+                },
+                {
+                  "name": "_assignee",
+                  "label": "Assigned To",
+                  "type": "select",
+                  "optionsFrom": {
+                    "service": "task_assignee_options",
+                    "params": {
+                      "task_id": "${row.task_id}"
+                    },
+                    "value": "value",
+                    "label": "label"
+                  },
+                  "compute": "row.assigned_to ?? ''"
+                },
+                {
+                  "name": "_new_assignee",
+                  "label": "New name",
+                  "type": "text",
+                  "required": "_assignee == '__new__'",
+                  "showWhen": "_assignee == '__new__'",
+                  "placeholder": "A name typed here joins the list"
+                },
+                {
+                  "name": "assigned_to",
+                  "type": "hidden",
+                  "compute": "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
                 },
                 {
                   "name": "notes",
@@ -655,6 +717,33 @@
                   "value": "${row.due}"
                 },
                 {
+                  "name": "_assignee",
+                  "label": "Assigned To",
+                  "type": "select",
+                  "optionsFrom": {
+                    "service": "task_assignee_options",
+                    "params": {
+                      "task_id": "${row.task_id}"
+                    },
+                    "value": "value",
+                    "label": "label"
+                  },
+                  "compute": "row.assigned_to ?? ''"
+                },
+                {
+                  "name": "_new_assignee",
+                  "label": "New name",
+                  "type": "text",
+                  "required": "_assignee == '__new__'",
+                  "showWhen": "_assignee == '__new__'",
+                  "placeholder": "A name typed here joins the list"
+                },
+                {
+                  "name": "assigned_to",
+                  "type": "hidden",
+                  "compute": "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
+                },
+                {
                   "name": "notes",
                   "label": "Notes",
                   "type": "textarea",
@@ -770,7 +859,7 @@
                 }
               ],
               "footer": {
-                "note": "${IF(kind == 'task', 'The link shows on both tasks, worded from each side. Relations are edited under Tasks › Relations.', 'Files: drop, paste, or pick them in the Detail pane.')}"
+                "note": "${IF(kind == 'task', 'The link shows on both tasks, worded from each side. Relations are edited under Configure › Relations.', 'Files: drop, paste, or pick them in the Detail pane.')}"
               },
               "submit": {
                 "label": "Add",
@@ -1344,6 +1433,147 @@
         },
         "chips": false
       }
+    },
+    "assignees": {
+      "title": "Assignees",
+      "type": "mkio-table",
+      "service": "all_assignees",
+      "protocol": "query",
+      "columns": [
+        "name",
+        "notes"
+      ],
+      "labels": {
+        "name": "Name",
+        "notes": "Notes"
+      },
+      "sort": [
+        "name"
+      ],
+      "buttons": [
+        {
+          "label": "New",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "New Assignee",
+              "modal": true,
+              "width": 440,
+              "fields": [
+                {
+                  "name": "name",
+                  "label": "Name",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "Who the task is assigned to"
+                },
+                {
+                  "name": "notes",
+                  "label": "Notes",
+                  "type": "textarea",
+                  "value": ""
+                }
+              ],
+              "submit": {
+                "label": "Create",
+                "service": "tasks",
+                "op": "add_assignee"
+              },
+              "footer": {
+                "note": "The picker also adds a name typed straight into it."
+              }
+            }
+          }
+        },
+        {
+          "label": "Edit",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Edit Assignee",
+              "modal": true,
+              "width": 440,
+              "fields": [
+                {
+                  "name": "assignee_id",
+                  "type": "hidden",
+                  "value": "${row.assignee_id}"
+                },
+                {
+                  "name": "updated_at",
+                  "type": "hidden",
+                  "value": "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+                },
+                {
+                  "name": "name",
+                  "label": "Name",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "Who the task is assigned to",
+                  "value": "${row.name}"
+                },
+                {
+                  "name": "notes",
+                  "label": "Notes",
+                  "type": "textarea",
+                  "value": "${row.notes}"
+                }
+              ],
+              "submit": {
+                "label": "Save",
+                "service": "tasks",
+                "op": "edit_assignee"
+              }
+            }
+          }
+        },
+        {
+          "label": "Delete",
+          "unit": "row",
+          "enable": {
+            "connected": true
+          },
+          "style": [
+            {
+              "when": "enabled",
+              "background": "#c62828",
+              "color": "#fff"
+            }
+          ],
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Delete Assignee",
+              "modal": true,
+              "width": 460,
+              "fields": [
+                {
+                  "name": "assignee_id",
+                  "type": "hidden",
+                  "value": "${row.assignee_id}"
+                },
+                {
+                  "label": "Take this name off the list? Every task already assigned to it keeps it.",
+                  "type": "readonly",
+                  "value": "${row.name}"
+                }
+              ],
+              "submit": {
+                "label": "Delete",
+                "service": "tasks",
+                "op": "delete_assignee"
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "frames": [

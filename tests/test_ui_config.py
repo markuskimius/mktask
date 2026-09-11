@@ -67,6 +67,12 @@ def _walk(node):
             yield from _walk(v)
 
 
+def _menu(app_config, menu, item):
+    """The pane a named item of a named top-level menu shows."""
+    items = next(m["items"] for m in app_config["menubar"] if m["label"] == menu)
+    return next(i["args"] for i in items if i.get("label") == item)
+
+
 def _layout_panes(layout):
     for child in layout.get("children", []):
         if isinstance(child, str):
@@ -589,7 +595,7 @@ def test_delete_buttons_are_red_only_when_armed(app_config):
             for rule in rules:
                 assert not ({"bold", "caps"} & set(rule)), "size-changing keys shift the toolbar"
             assert all(set(r) - {"when"} <= {"color", "background"} for r in rules)
-    assert seen == 3, "Tasks, References, and Relations each have a Delete"
+    assert seen == 4, "Tasks, References, Relations, and Assignees each have a Delete"
 
 
 def test_detail_delete_borrows_the_red(app_config):
@@ -757,7 +763,89 @@ def test_relations_pane_and_dialogs(app_config, server_config):
     assert edit["forward"]["value"] == "${row.forward}"
     assert "row.forward == row.backward" in edit["backward"]["value"], "a symmetric pair shows a blank backward"
     assert _hidden(by_label["Delete"], "relation_id") == "${row.relation_id}"
-    assert "relations" in {i["args"] for i in _walk(app_config["menubar"]) if i.get("action") == "pane.show"}
+    assert _menu(app_config, "Configure", "Relations") == "relations", "opened from Configure"
+
+
+def test_configure_menu_holds_the_lists(app_config):
+    """The two panes that are settings rather than work sit under their own
+    menu, between Edit and Layout, and nowhere else."""
+    labels = [m["label"] for m in app_config["menubar"]]
+    assert labels.index("Configure") == labels.index("Edit") + 1
+    assert labels.index("Configure") == labels.index("Layout") - 1
+    configure = next(m for m in app_config["menubar"] if m["label"] == "Configure")
+    assert [i["label"] for i in configure["items"]] == ["Relations", "Assignees"]
+    assert all(i["action"] == "pane.show" for i in configure["items"])
+    tasks = next(m for m in app_config["menubar"] if m["label"] == "Tasks")
+    from_tasks = {i["args"] for i in tasks["items"] if i.get("action") == "pane.show"}
+    assert not ({"relations", "assignees"} & from_tasks), "the lists left the Tasks menu"
+
+
+def test_assignees_pane_manages_the_dropdown(app_config, server_config):
+    """The Assigned To dropdown is a table like any other: New, Edit, and a
+    Delete that says what it does *not* do."""
+    pane = app_config["panes"]["assignees"]
+    assert pane["service"] == "all_assignees"
+    assert server_config["services"]["all_assignees"]["primary_table"] == "assignees"
+    by_label = {b["label"]: b["action"]["dialog"] for b in pane["buttons"]}
+    assert set(by_label) == {"New", "Edit", "Delete"}
+    assert _fields(by_label["New"])["name"]["required"] is True
+    assert _fields(by_label["Edit"])["name"]["value"] == "${row.name}"
+    assert _hidden(by_label["Edit"], "assignee_id") == "${row.assignee_id}"
+    text = json.dumps(by_label["Delete"]["fields"])
+    assert "keeps it" in text, "a delete leaves the tasks that carry the name alone"
+    assert "cannot be undone" not in text, "nothing is lost, so nothing to warn about"
+    assert _menu(app_config, "Configure", "Assignees") == "assignees"
+
+
+def test_assigned_to_is_picked_or_typed(app_config, server_config):
+    """The Assigned To field is one picker in three dialogs.
+
+    mkui's `optionsFrom` prepends a blank entry that cannot be removed, and
+    lands on it after every fetch. That blank *is* unassigned — it submits
+    as '' — so the picker carries one sentinel, `__new__`, and no row of
+    its own for nobody. A dialog that opens on a row adds a `compute` that
+    puts the row's name back in the picker once the list has loaded; the
+    name is always in that list (`task_assignee_options` unions it in),
+    because falling to the blank would now mean clearing the assignment.
+    """
+    assert "assigned_to" in server_config["tables"]["tasks"]["columns"]
+    tasks = app_config["panes"]["tasks"]
+    assert "assigned_to" in tasks["columns"] and tasks["labels"]["assigned_to"] == "Assigned To"
+    assert ("assigned_to", "Assigned To") in _task_fields(), "the Detail pane shows it too"
+    options = server_config["services"]["assignee_options"]
+    scoped = server_config["services"]["task_assignee_options"]
+    assert options["protocol"] == scoped["protocol"] == "reqrep"
+    for svc in (options, scoped):
+        assert "'__new__'" in svc["sql"], "the picker offers __new__"
+        assert "__none__" not in svc["sql"], "unassigned is mkui's blank, not a row"
+    assert ":" not in options["sql"], "no params: a blank one would empty the whole list"
+    assert ":task_id" in scoped["sql"] and "FROM tasks" in scoped["sql"], \
+        "a dialog on a task also offers the name that task carries"
+
+    seen = {}
+    for label, dialog in ((b["label"], b["action"].get("dialog"))
+                          for b in app_config["panes"]["tasks"]["buttons"]):
+        if dialog is None or "_assignee" not in _fields(dialog):
+            continue
+        fields = _fields(dialog)
+        seen[label] = fields
+        picker = fields["_assignee"]["optionsFrom"]
+        assert picker["service"] == ("assignee_options" if label == "New"
+                                     else "task_assignee_options")
+        assert picker.get("params", {}).get("task_id", "${row.task_id}") == "${row.task_id}"
+        assert fields["_new_assignee"]["showWhen"] == "_assignee == '__new__'"
+        assert fields["_new_assignee"]["required"] == "_assignee == '__new__'"
+        send = fields["assigned_to"]
+        assert send["type"] == "hidden", "the picker and the box are scratch; this is what is sent"
+        assert send["compute"] == "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)", \
+            "the typed name, or whatever is picked — and the blank picks ''"
+    assert set(seen) == {"New", "Edit", "Split"}
+    assert "compute" not in seen["New"]["_assignee"], "a new task starts on nobody"
+    for label in ("Edit", "Split"):
+        assert seen[label]["_assignee"]["compute"] == "row.assigned_to ?? ''", \
+            f"{label} opens on the name the row carries"
+        assert seen[label]["_assignee"]["optionsFrom"]["service"] == "task_assignee_options", \
+            f"{label} must offer that name, or the blank would clear it"
 
 
 def test_relations_are_seeded_from_the_package(server_config):
@@ -811,14 +899,14 @@ def test_window_menu_lists_open_windows(app_config):
 
 
 def test_frames_place_every_pane_once_or_menu_reaches_it(app_config):
-    """A pane is either in the default layout or opened on demand from the
-    Tasks menu (the Linked Task pane opens when a task link is followed)."""
+    """A pane is either in the default layout or opened on demand from a
+    menu — the working panes from Tasks, the two lists from Configure."""
     placed = [p for f in app_config["frames"] for p in _layout_panes(f["layout"])]
     assert len(placed) == len(set(placed)), "a pane placed twice"
     assert set(placed) <= set(app_config["panes"])
     shown = {i["args"] for i in _walk(app_config["menubar"]) if i.get("action") == "pane.show"}
-    assert shown == set(app_config["panes"]), "the Tasks menu shows every pane"
-    assert "relations" not in placed, "opened on demand, not at start"
+    assert shown == set(app_config["panes"]), "every pane is on a menu"
+    assert not ({"relations", "assignees"} & set(placed)), "opened on demand, not at start"
     assert {"tasks", "references", "task-detail"} <= set(placed)
     for frame in app_config["frames"]:
         assert 0 <= frame["x"] and frame["x"] + frame["w"] <= 1

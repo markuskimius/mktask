@@ -163,7 +163,9 @@ class TestHttp:
             async with s.get(server + "/api/services") as resp:
                 names = {svc["name"] for svc in await resp.json()}
         assert {"tasks", "all_tasks", "task_refs", "all_relations", "relation_options",
-                "task_options", "move_options", "mkui_layouts", "mkui_layouts_list", "mkui_layouts_get"} <= names
+                "all_assignees", "assignee_options", "task_assignee_options",
+                "task_options", "move_options",
+                "mkui_layouts", "mkui_layouts_list", "mkui_layouts_get"} <= names
 
 
 class TestWebSocket:
@@ -199,7 +201,8 @@ class TestWebSocket:
 
                 await _txn(ws, "edit", {"task_id": task_id, "title": "Write tests!",
                                         "notes": "", "importance": 2, "urgency": 2,
-                                        "due": "", "updated_at": "2026-09-05 00:00:00"}, "r3")
+                                        "due": "", "assigned_to": "",
+                                        "updated_at": "2026-09-05 00:00:00"}, "r3")
                 await _txn(ws, "complete", {"task_id": task_id, "completed_at": "2026-09-05 01:00:00",
                                             "updated_at": "2026-09-05 01:00:00"}, "r4")
                 await asyncio.sleep(0.2)
@@ -449,7 +452,8 @@ class TestSplit:
             async with s.ws_connect(server + "/ws") as ws:
                 root, child, grandchild, _ = await self._tree(ws, "E")
                 await _txn(ws, "edit", {"task_id": child, "title": "E-child!", "notes": "n", "importance": 1,
-                                        "urgency": 1, "due": "", "updated_at": NOW}, "E4")
+                                        "urgency": 1, "due": "", "assigned_to": "",
+                                        "updated_at": NOW}, "E4")
                 await _txn(ws, "delete", {"task_id": grandchild}, "E5")
                 await asyncio.sleep(0.2)
                 rows = await _snapshot(ws, "E-s")
@@ -991,7 +995,8 @@ class TestTaskLinks:
                 await _add_ref(ws, b, "tt3", kind="task", relation="relates to", href=a)
                 await asyncio.sleep(0.2)
                 await _txn(ws, "edit", {"task_id": a, "title": "New title", "notes": "", "importance": 3,
-                                        "urgency": 3, "due": "", "updated_at": NOW}, "tt4")
+                                        "urgency": 3, "due": "", "assigned_to": "",
+                                        "updated_at": NOW}, "tt4")
                 [rb] = await _refs(ws, b)
                 # edit_ref on a link ignores a label: it follows the linked task
                 await _txn(ws, "edit_ref", {"ref_id": rb["ref_id"], "label": "Mine", "relation": "relates to",
@@ -1047,6 +1052,262 @@ class TestTaskLinks:
                 got = {r["value"]: r["label"] for r in rows}
         assert a not in got and c not in got
         assert got[b] == f"{b}  Option other", "the picker labels a task by its title"
+
+
+class TestAssignees:
+    """The Assigned To dropdown: a list of its own, grown by the picker, and
+    deliberately unable to reach back into the tasks that carry a name."""
+
+    async def _list(self, ws, subid):
+        await ws.send_json({"service": "all_assignees", "type": "subscribe", "protocol": "query",
+                            "subid": subid, "ref": f"as-{subid}"})
+        snap = await _recv_json(ws)
+        await ws.send_json({"service": "all_assignees", "type": "unsubscribe", "subid": subid})
+        return {r["name"]: r for r in snap["rows"]}
+
+    async def _task(self, ws, task_id, subid):
+        rows = await _snapshot(ws, subid)
+        return next(r for r in rows.values() if r["task_id"] == task_id)
+
+    async def test_a_name_typed_on_a_task_joins_the_list(self, server):
+        """The picker is the list's front door: a name it does not hold is
+        added in the same transaction as the task it was typed on."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await _txn(ws, "add", {"title": "Typed a name", "assigned_to": " Ada Lovelace "}, "an1")
+                await asyncio.sleep(0.3)
+                rows = await _snapshot(ws, "an2")
+                listed = await self._list(ws, "an3")
+                options = await _request(ws, "assignee_options", {})
+        assert rows["Typed a name"]["assigned_to"] == "Ada Lovelace", "trimmed, and kept on the task"
+        assert "Ada Lovelace" in listed, "and offered from then on"
+        values = [o["value"] for o in options]
+        assert values[0] == "__new__", "the one sentinel leads"
+        assert values[1:] == sorted(values[1:]), "then the names, alphabetically"
+        assert "__none__" not in values, "unassigned is mkui's own blank entry, not a row"
+        assert "Ada Lovelace" in values
+        by_value = {o["value"]: o["label"] for o in options}
+        assert by_value["Ada Lovelace"] == "Ada Lovelace"
+        assert "New name" in by_value["__new__"]
+
+    async def test_a_dialog_on_a_task_offers_the_name_that_task_carries(self, server):
+        """A name off the list would leave the Edit picker blank on the very
+        task that still carries it — so that task's own name joins its
+        options, once, whether or not the list still holds it."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Carries a retired name", "ao1")
+                await _edit(ws, task, "ao2", title="Carries a retired name",
+                            assigned_to="Gone Away")
+                await asyncio.sleep(0.3)
+                listed = await self._list(ws, "ao3")
+                scoped = await _request(ws, "task_assignee_options", {"task_id": task})
+                assert [o["value"] for o in scoped].count("Gone Away") == 1, "listed once, not twice"
+                await _txn(ws, "delete_assignee",
+                           {"assignee_id": listed["Gone Away"]["assignee_id"]}, "ao4")
+                await asyncio.sleep(0.3)
+                plain = await _request(ws, "assignee_options", {})
+                scoped = await _request(ws, "task_assignee_options", {"task_id": task})
+                other = await _request(ws, "task_assignee_options",
+                                       {"task_id": await _add(ws, "Carries nobody", "ao5")})
+        assert "Gone Away" not in {o["value"] for o in plain}, "off the list everywhere else"
+        assert "Gone Away" in {o["value"] for o in scoped}, "still offered where it is in use"
+        assert "Gone Away" not in {o["value"] for o in other}
+        assert [o["value"] for o in scoped][0] == "__new__"
+
+    async def test_a_name_rides_the_task_it_was_typed_on(self, server):
+        """`add_assignee` is a step in the same transaction as the task, so
+        a task that never lands takes the name down with it. A name that is
+        only whitespace is no name at all and joins nothing."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                r = await _txn(ws, "add", {"assigned_to": "Never Landed"}, "aa1", expect="error")
+                assert r["message"], "a task with no title cannot be written"
+                await _txn(ws, "add", {"title": "Blank name", "assigned_to": "   "}, "aa2")
+                await asyncio.sleep(0.3)
+                rows = await _snapshot(ws, "aa3")
+                listed = await self._list(ws, "aa4")
+        assert "Never Landed" not in listed, "the name was rolled back with the task"
+        assert rows["Blank name"]["assigned_to"] == ""
+        assert not [n for n in listed if not n.strip()], "whitespace is not a name"
+
+    async def test_a_listed_name_wins_on_spelling(self, server):
+        """Typing "grace" when the list holds "Grace Hopper"'s twin is the
+        same person: one entry, spelled the way the list spells it."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await _txn(ws, "add_assignee", {"name": "Grace", "notes": ""}, "as1")
+                await asyncio.sleep(0.2)
+                await _txn(ws, "add", {"title": "Typed it in lowercase", "assigned_to": "grace"}, "as2")
+                await asyncio.sleep(0.3)
+                rows = await _snapshot(ws, "as3")
+                listed = await self._list(ws, "as4")
+        assert rows["Typed it in lowercase"]["assigned_to"] == "Grace"
+        assert [n for n in listed if n.lower() == "grace"] == ["Grace"], "no second entry reading the same"
+
+    async def test_the_pickers_sentinel_never_reaches_the_column(self, server):
+        """The dialog maps "__new__" to the name typed beside it before it
+        submits; the service maps it again, so it cannot be stored as one.
+        Unassigned needs no sentinel — mkui's blank entry submits as ''."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await _txn(ws, "add", {"title": "Sentinel new", "assigned_to": "__new__"}, "sn1")
+                await _txn(ws, "add", {"title": "Picked the blank", "assigned_to": ""}, "sn2")
+                await asyncio.sleep(0.3)
+                rows = await _snapshot(ws, "sn3")
+                listed = await self._list(ws, "sn4")
+        assert rows["Sentinel new"]["assigned_to"] == ""
+        assert rows["Picked the blank"]["assigned_to"] == "", "the blank means nobody"
+        assert "__new__" not in listed
+
+    async def test_the_blank_clears_an_assignment(self, server):
+        """What the blank means on an edit: nobody. It is the only way to
+        take a name off a task, and the picker lands on it by itself when
+        the task has no name to preselect."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Assigned then not", "ab1")
+                await _edit(ws, task, "ab2", title="Assigned then not", assigned_to="Briefly Owned")
+                await asyncio.sleep(0.3)
+                assert (await self._task(ws, task, "ab3"))["assigned_to"] == "Briefly Owned"
+                await _edit(ws, task, "ab4", title="Assigned then not", assigned_to="")
+                await asyncio.sleep(0.3)
+                cleared = await self._task(ws, task, "ab5")
+                listed = await self._list(ws, "ab6")
+        assert cleared["assigned_to"] == ""
+        assert "Briefly Owned" in listed, "clearing a task does not take the name off the list"
+
+    async def test_split_and_edit_carry_the_assignment(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Assign parent", "ac1")
+                await _split(ws, parent, "Assign child", "ac2", assigned_to="Kay")
+                await _edit(ws, parent, "ac3", title="Assign parent", assigned_to="Kay")
+                await asyncio.sleep(0.3)
+                rows = await _snapshot(ws, "ac4")
+                listed = await self._list(ws, "ac5")
+        assert rows["Assign child"]["assigned_to"] == "Kay"
+        assert rows["Assign parent"]["assigned_to"] == "Kay"
+        assert len([n for n in listed if n == "Kay"]) == 1, "the second task found the name already there"
+
+    async def test_a_deleted_name_stays_on_its_tasks_and_off_the_list(self, server):
+        """The whole point of storing the name rather than a key: taking a
+        name off the dropdown is a change to the dropdown, nothing else.
+        An unrelated edit of a task carrying a retired name must not put
+        the name back on the list either."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Left behind", "ad1")
+                await _edit(ws, task, "ad2", title="Left behind", assigned_to="Retiree")
+                await asyncio.sleep(0.3)
+                listed = await self._list(ws, "ad3")
+                await _txn(ws, "delete_assignee",
+                           {"assignee_id": listed["Retiree"]["assignee_id"]}, "ad4")
+                await asyncio.sleep(0.3)
+                gone = await self._list(ws, "ad5")
+                still = await self._task(ws, task, "ad6")
+                assert "Retiree" not in gone, "off the dropdown"
+                assert still["assigned_to"] == "Retiree", "and still on the task"
+
+                # A later edit of that task sends the name back unchanged.
+                await _edit(ws, task, "ad7", title="Left behind, edited", assigned_to="Retiree")
+                await asyncio.sleep(0.3)
+                after = await self._list(ws, "ad8")
+                kept = await self._task(ws, task, "ad9")
+        assert "Retiree" not in after, "an unchanged name does not rejoin the list"
+        assert kept["assigned_to"] == "Retiree" and kept["title"] == "Left behind, edited"
+
+    async def test_splitting_a_task_inherits_its_name_without_reviving_it(self, server):
+        """The Split picker opens on the parent's name, so accepting it is
+        inheriting, not typing: a retired name goes to the child and stays
+        off the list. Typing a different one still puts that one on."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                parent = await _add(ws, "Retired parent", "ai1")
+                await _edit(ws, parent, "ai2", title="Retired parent", assigned_to="Ex Owner")
+                await asyncio.sleep(0.3)
+                listed = await self._list(ws, "ai3")
+                await _txn(ws, "delete_assignee",
+                           {"assignee_id": listed["Ex Owner"]["assignee_id"]}, "ai4")
+                await asyncio.sleep(0.3)
+                await _split(ws, parent, "Inherits it", "ai5", assigned_to="Ex Owner")
+                await _split(ws, parent, "Gets someone else", "ai6", assigned_to="Fresh Owner")
+                await asyncio.sleep(0.3)
+                rows = await _snapshot(ws, "ai7")
+                after = await self._list(ws, "ai8")
+        assert rows["Inherits it"]["assigned_to"] == "Ex Owner", "the child takes the name"
+        assert "Ex Owner" not in after, "and inheriting does not put it back on the list"
+        assert rows["Gets someone else"]["assigned_to"] == "Fresh Owner"
+        assert "Fresh Owner" in after, "a name the split actually introduces does join"
+
+    async def test_a_rename_changes_the_list_and_no_task(self, server):
+        """Unlike a relation, whose wording a link is looked up by, a name
+        is only ever displayed — so a rename leaves every task alone."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Renamed away", "ar1")
+                await _edit(ws, task, "ar2", title="Renamed away", assigned_to="Mispelt")
+                await asyncio.sleep(0.3)
+                listed = await self._list(ws, "ar3")
+                await _txn(ws, "edit_assignee", {"assignee_id": listed["Mispelt"]["assignee_id"],
+                                                 "name": " Misspelt ", "notes": "fixed",
+                                                 "updated_at": NOW}, "ar4")
+                await asyncio.sleep(0.3)
+                after = await self._list(ws, "ar5")
+                kept = await self._task(ws, task, "ar6")
+        assert "Mispelt" not in after and after["Misspelt"]["notes"] == "fixed"
+        assert kept["assigned_to"] == "Mispelt", "the task keeps the name it was given"
+
+    async def test_the_list_refuses_a_blank_or_repeated_name(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await _txn(ws, "add_assignee", {"name": "Unique One", "notes": ""}, "au1")
+                await asyncio.sleep(0.2)
+                r = await _txn(ws, "add_assignee", {"name": "  ", "notes": ""}, "au2", expect="error")
+                assert "name" in r["message"]
+                r = await _txn(ws, "add_assignee", {"name": "UNIQUE ONE", "notes": ""}, "au3",
+                               expect="error")
+                assert "already on the list" in r["message"]
+                listed = await self._list(ws, "au4")
+                one = listed["Unique One"]["assignee_id"]
+                # its own name is not a clash
+                await _txn(ws, "edit_assignee", {"assignee_id": one, "name": "Unique One",
+                                                 "notes": "same", "updated_at": NOW}, "au5")
+                r = await _txn(ws, "edit_assignee", {"assignee_id": 99999, "name": "Nobody",
+                                                     "notes": "", "updated_at": NOW}, "au6",
+                               expect="error")
+                assert "No assignee" in r["message"]
+                await asyncio.sleep(0.2)
+                after = await self._list(ws, "au7")
+        assert after["Unique One"]["notes"] == "same"
+        assert len([n for n in after if n.lower() == "unique one"]) == 1
+
+    async def test_an_assignment_steps_back_with_the_task(self, server):
+        """`assigned_to` is a column of a versioned table, so it rides in
+        every recorded version and undo puts back what was there before.
+        The list itself is not versioned and does not step: the name stays
+        on offer, which is what makes the redo worth having."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Reassigned", "av1")
+                await _edit(ws, task, "av2", title="Reassigned", assigned_to="First Owner")
+                await asyncio.sleep(0.3)
+                await _edit(ws, task, "av3", title="Reassigned", assigned_to="Second Owner")
+                await asyncio.sleep(0.3)
+                assert (await self._task(ws, task, "av4"))["assigned_to"] == "Second Owner"
+                await _undo(ws, {"task_id": task}, "av5")
+                await asyncio.sleep(0.4)
+                back = await self._task(ws, task, "av6")
+                listed = await self._list(ws, "av7")
+                await _redo(ws, {"task_id": task}, "av8")
+                await asyncio.sleep(0.4)
+                forward = await self._task(ws, task, "av9")
+                chain = await _chain(ws, "task_version_chain", {"task_id": task})
+        assert back["assigned_to"] == "First Owner"
+        assert forward["assigned_to"] == "Second Owner"
+        assert {"First Owner", "Second Owner"} <= set(listed), "the list does not step back"
+        # Every version carries the column, which is what History diffs on.
+        assert [c["assigned_to"] for c in chain] == ["", "First Owner", "Second Owner"]
 
 
 class TestRelations:
@@ -1379,7 +1640,7 @@ async def _redo(ws, key, ref, expect="result"):
 
 async def _edit(ws, task_id, ref, **fields):
     """`edit` declares no defaults, so every field is required: fill them in."""
-    full = {"title": "", "notes": "", "importance": 3, "urgency": 3, "due": ""}
+    full = {"title": "", "notes": "", "importance": 3, "urgency": 3, "due": "", "assigned_to": ""}
     return await _txn(ws, "edit", {"task_id": task_id, "updated_at": NOW, **full, **fields}, ref)
 
 
@@ -1949,7 +2210,7 @@ class TestUpgrade:
     def _pre_history_db(self, tmp_path):
         """A database shaped the way 0.7.0 left one: no `_mkio_version`, no
         history tables, no `task_events`, no `last_event`. Built from the
-        current config minus what 0.8.0 added, so it stays in step."""
+        current config minus everything added since, so it stays in step."""
         import sqlite3
         import tomllib
         cfg = tomllib.loads((__import__("pathlib").Path(__file__).resolve().parent.parent
@@ -1959,6 +2220,7 @@ class TestUpgrade:
         for name in ("tasks", "task_refs", "relations", "counters"):
             cols = dict(cfg["tables"][name]["columns"])
             cols.pop("last_event", None)
+            cols.pop("assigned_to", None)
             con.execute(f"CREATE TABLE {name} ({', '.join(f'{c} {d}' for c, d in cols.items())})")
         con.execute("INSERT INTO tasks (task_id, title, importance, urgency) "
                     "VALUES ('TKMA00000001', 'Made before history', 5, 3)")
@@ -1984,6 +2246,7 @@ class TestUpgrade:
                 task = rows["Made before history"]
                 assert task["_mkio_version"] == 1, "no cursor on a row that predates versioning"
                 assert task["last_event"] == "", "a row from before has no event to name"
+                assert task["assigned_to"] == "", "a column added later starts empty"
 
                 chain = await _chain(ws, "task_version_chain", {"task_id": task["task_id"]})
                 assert [c["_mkio_op"] for c in chain] == ["baseline"]

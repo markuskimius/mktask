@@ -27,6 +27,21 @@ every open task except the ones under the task being moved, and a move that
 would land a linked task in its own tree is refused, naming the links to
 remove first.
 
+A task can be **assigned to** someone. *Assigned To* is a dropdown: pick a
+name, pick *— New name —* and type one — a name typed there joins the list
+and is offered from then on — or pick the blank first entry, which means
+nobody. The dropdown opens on whoever the task is assigned to, so leaving
+it alone changes nothing, and splitting a task opens on the parent's name,
+so a child usually needs no picking at all.
+
+The list itself is yours to keep, under Configure › Assignees: add a name
+before anyone is assigned to it, fix a spelling, or take a name off it when
+someone leaves. **Taking a name off the list changes the list and nothing
+else** — every task already assigned to that name keeps it, and the name
+still shows in the dropdown of a task that carries it, so editing that task
+cannot lose it by accident. Renaming works the same way: it changes what the
+picker offers next time, not what any task says.
+
 Every task gets a **Task ID** like `TKMA00000042`: `TK`, two letters from
 the username the server runs as (`--user`), and a sequence number that
 starts at `00000001`, never repeats, and grows past eight digits rather than
@@ -41,8 +56,8 @@ label suggested from the URL or the first line of the text. Files are
 added from the Detail pane instead: select a task and drop, paste, or pick
 a file there; an image pastes straight from the clipboard, a pasted URL
 becomes a URL reference, pasted text a snippet. The Detail pane opens with
-the task itself — its status, importance, urgency, score, due date and notes
-— and lists every reference of the selected task the moment it is selected,
+the task itself — its status, importance, urgency, score, due date, who it is
+assigned to, and notes — and lists every reference of the selected task the moment it is selected,
 **and every reference of the tasks split from it** — a section per relation ("Blocks",
 "Blocked by"), then the snippets, images, files, and URLs, each section
 counted, and a reference a child owns tagged with its Task ID. **Images show
@@ -69,7 +84,7 @@ References panes follow it (a linked task the current filter hides is revealed
 first). Only tasks from different trees can be linked; tasks that share a root
 are already related by splitting.
 
-**Relations are yours to define** under Tasks › Relations: each is a pair
+**Relations are yours to define** under Configure › Relations: each is a pair
 of wordings, one from this task to that one ("blocks") and one back
 ("blocked by"), or a single wording that reads the same both ways ("relates
 to"). A new database starts with those two. Renaming a relation rewrites
@@ -183,7 +198,10 @@ sends the ops that were already there. 0.8.0 adds a `last_event` column, the
 `task_events` table, and a recorded history of `tasks` and `task_refs` — all
 of which an existing database picks up on first start: `auto_migrate` adds
 the column and the tables, and every row already there is recorded as its
-own version 1 so it can be stepped back to. Nothing has to be deleted.
+own version 1 so it can be stepped back to. Nothing has to be deleted. 0.9.0
+adds an `assigned_to` column and the `assignees` table behind the Assigned To
+dropdown, both of which `auto_migrate` adds to an existing database on first
+start; every task starts unassigned and the list starts empty.
 
 ## Development
 
