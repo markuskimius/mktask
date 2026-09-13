@@ -352,6 +352,16 @@ def test_text_widgets_read_declared_state(app_config):
         assert path.split(".")[0] in roots
 
 
+def test_statusbar_shows_name_and_server_version(app_config):
+    """The right-hand statusbar text names the app and shows the version the
+    server announced in its `_mkio` reply, which mkui publishes as
+    `state.mkio.server.version` -- the app.json cannot know its own version, and
+    pinning one in `mkio.expect` would make every release a mismatch."""
+    texts = [w["text"] for w in app_config["statusbar"]["right"] if w.get("type") == "text"]
+    assert any(t.startswith("mktask") and "state.mkio.server.version" in t for t in texts), texts
+    assert "version" not in app_config["mkio"]["expect"]
+
+
 def test_custom_widgets_are_registered(app_config):
     """Every non-text widget type is registered by a module index.html imports."""
     html = (STATIC / "index.html").read_text()

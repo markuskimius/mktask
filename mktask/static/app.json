@@ -142,7 +142,7 @@
     "right": [
       {
         "type": "text",
-        "text": "mktask"
+        "text": "mktask${IF(state.mkio.server.version, CONCAT(' ', state.mkio.server.version), '')}"
       }
     ],
     "bindStyle": {

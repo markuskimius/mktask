@@ -23,8 +23,8 @@ classifiers = [
     "Topic :: Office/Business :: Scheduling",
 ]
 dependencies = [
-    "mkio>=0.8.0",   # joined queries update live: the References pane's Task Title
-    "mkui>=0.8.0",   # submit.then: the reference dialogs select the task they filed on
+    "mkio>=1.0,<2",  # Semantic Versioning from 1.0: the config format, protocol and clients are settled
+    "mkui>=1.0,<2",  # mkui 1.x is built against mkio 1.x and refuses any other major
 ]
 
 [project.optional-dependencies]
