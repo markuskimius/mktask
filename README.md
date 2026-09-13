@@ -82,7 +82,9 @@ announces it.
 
 The References pane follows the
 selected tasks (mkui table linking; clear the selection to see every
-reference), with URLs and files as links; selecting one there opens and marks
+reference), each reference beside its task's Task ID and title (the title is
+joined in live: renaming the task updates the column), with URLs and files as
+links; selecting one there opens and marks
 the same line in the Detail pane, and a reference the Detail pane does not
 list leaves it alone. A task link shows on both tasks, worded from each side,
 and *Go to* selects the linked task in the blotter, so the Detail and
@@ -209,7 +211,9 @@ adds an `assigned_to` column and the `assignees` table behind the Assigned To
 dropdown, both of which `auto_migrate` adds to an existing database on first
 start; every task starts unassigned and the list starts empty. 0.10.0
 changes no schema: the Add URL / Add Text / Add Link dialogs read a new
-lookup service over the tables that were already there.
+lookup service over the tables that were already there. 0.11.0 changes no
+schema either: the References pane's Task Title is joined in by the
+`task_refs` query, which mkio 0.8.0 keeps live, so nothing new is stored.
 
 ## Development
 

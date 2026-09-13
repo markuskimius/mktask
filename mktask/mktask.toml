@@ -207,10 +207,18 @@ description = "Every task, live"
 primary_table = "tasks"
 filterable = ["status", "parent_task_id"]
 
+# Joins the owning task's title in as task_title (the References pane's
+# Task Title). mkio >= 0.8 re-reads a changed reference through this sql and,
+# because tasks is watched, re-runs it when a task changes and sends the
+# references whose task_title moved — so a rename reaches the pane live and
+# no copy of the title has to be kept on the row. r.* keeps ref_id in the
+# result, which is what the re-read looks a row up by.
 [services.task_refs]
 protocol = "query"
-description = "Every reference of every task, live"
+description = "Every reference of every task, live, with its task's title"
 primary_table = "task_refs"
+watch_tables = ["task_refs", "tasks"]
+sql = "SELECT r.*, COALESCE(t.title, '') AS task_title FROM task_refs r LEFT JOIN tasks t ON t.task_id = r.task_id"
 filterable = ["task_id", "kind", "relation"]
 
 [services.all_relations]

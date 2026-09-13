@@ -183,9 +183,16 @@ def _table_columns(table, server_config) -> set:
     return known | {VERSION_COLUMN} if spec.get("versioned") else known
 
 
+def _sql_aliases(sql: str) -> set:
+    """The `AS name` columns a custom query sql adds to its primary table."""
+    return set(re.findall(r"\bAS\s+([a-z_]+)", sql, flags=re.IGNORECASE))
+
+
 def _columns_of(pane, server_config) -> set:
-    """The columns a pane's query returns: its service's primary table."""
-    return _table_columns(server_config["services"][pane["service"]]["primary_table"], server_config)
+    """The columns a pane's query returns: its service's primary table, plus
+    whatever a custom sql names on top of it."""
+    svc = server_config["services"][pane["service"]]
+    return _table_columns(svc["primary_table"], server_config) | _sql_aliases(svc.get("sql", ""))
 
 
 def _pane_columns(pane, table_columns):
@@ -771,6 +778,23 @@ def test_reference_dialogs_follow_the_reference_to_its_task(app_config):
         assert then["action"] in MKUI_ACTIONS and then["action"] == "table.select", kind
         assert then["args"] == {"pane": "tasks", "keys": ["${task_id}"]}, kind
         assert then["args"]["pane"] in app_config["panes"]
+
+
+def test_references_pane_shows_the_task_title(references_pane, server_config):
+    """Task Title is a joined column, not a copy on the row: the `task_refs`
+    query joins `tasks` and watches it, which is what makes mkio (>= 0.8)
+    re-read a changed reference through the sql and re-run it when a task
+    changes, so a rename reaches the pane live. `r.*` keeps `ref_id` in the
+    result — without the primary key mkio cannot re-read a row and falls
+    back to the bare one, silently."""
+    assert "task_title" in references_pane["columns"]
+    assert references_pane["labels"]["task_title"] == "Task Title"
+    assert "task_title" not in server_config["tables"]["task_refs"]["columns"], "joined, not stored"
+    svc = server_config["services"]["task_refs"]
+    assert svc["watch_tables"] == ["task_refs", "tasks"]
+    assert "task_title" in _sql_aliases(svc["sql"])
+    assert "r.*" in svc["sql"] and "LEFT JOIN tasks" in svc["sql"]
+    assert "task_title" not in references_pane["history"]["columns"], "history is the row's own"
 
 
 def test_references_pane_shows_the_stored_wording(references_pane):

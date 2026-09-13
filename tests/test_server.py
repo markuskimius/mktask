@@ -729,6 +729,40 @@ class TestReferences:
         assert all(r["relation"] == "" for r in rows.values())
         assert all(r["ref_id"] > 0 for r in rows.values())
 
+    async def test_a_reference_shows_its_tasks_title_live(self, server):
+        """Task Title is joined in by the `task_refs` query, and a rename of
+        the task reaches a subscriber as an update to each of its references
+        — mkio re-runs a joined query when a watched table changes. Nothing
+        on the reference row itself changes, so its version does not move."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Titled", "rt1")
+                other = await _add(ws, "Untouched", "rt2")
+                await _add_ref(ws, task, "rt3", kind="url", href="https://a")
+                await _add_ref(ws, task, "rt4", kind="text", body="b")
+                await _add_ref(ws, other, "rt5", kind="url", href="https://c")
+                await asyncio.sleep(0.2)
+                assert {r["task_title"] for r in await _refs(ws, task)} == {"Titled"}
+                assert {r["task_title"] for r in await _refs(ws, other)} == {"Untouched"}
+
+                await ws.send_json({"service": "task_refs", "type": "subscribe", "protocol": "query",
+                                    "subid": "rt", "ref": "rt6"})
+                snap = await _recv_json(ws)
+                assert snap["type"] == "snapshot"
+                added = await TestSubtreeReferences._txn_updates(
+                    ws, "add_ref", {"task_id": task, "kind": "url", "href": "https://d"}, "rt6a")
+                assert [(u["op"], u["row"]["task_title"]) for u in added if u["service"] == "task_refs"] == [
+                    ("insert", "Titled")], "a reference added live arrives with its task's title"
+                updates = await TestSubtreeReferences._txn_updates(
+                    ws, "edit", {"task_id": task, "title": "Retitled", "notes": "", "importance": 3,
+                                 "urgency": 3, "due": "", "assigned_to": "", "updated_at": NOW}, "rt7")
+                await ws.send_json({"service": "task_refs", "type": "unsubscribe", "subid": "rt"})
+                refs = [u for u in updates if u["service"] == "task_refs"]
+                assert sorted((u["op"], u["row"]["task_id"], u["row"]["task_title"]) for u in refs) == [
+                    ("update", task, "Retitled")] * 3, "one update per reference of the renamed task, none for the other's"
+                assert all(u["row"]["_mkio_version"] == 1 for u in refs), "the reference itself did not change"
+                assert {r["task_title"] for r in await _refs(ws, other)} == {"Untouched"}
+
     async def test_add_ref_validation(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
@@ -831,14 +865,24 @@ class TestSubtreeReferences:
     @staticmethod
     async def _txn_updates(ws, op, data, ref):
         """A transaction on a socket that also holds a subscription: the live
-        updates land before the result."""
+        updates it causes, whether they land before the result (a query
+        served straight from the change event) or just after it (a joined
+        query, which mkio re-reads through its sql first)."""
         await ws.send_json({"service": "tasks", "type": "transaction", "op": op,
                             "data": data, "ref": ref})
         updates = []
         while True:
             msg = await _recv_json(ws)
             if msg["type"] == "result":
+                break
+            assert msg["type"] == "update", msg
+            updates.append(msg)
+        while True:
+            try:
+                msg = await asyncio.wait_for(ws.receive(), timeout=0.3)
+            except asyncio.TimeoutError:
                 return updates
+            msg = json.loads(msg.data)
             assert msg["type"] == "update", msg
             updates.append(msg)
 

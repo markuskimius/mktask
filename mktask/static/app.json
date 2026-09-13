@@ -932,6 +932,7 @@
       "protocol": "query",
       "columns": [
         "task_id",
+        "task_title",
         "kind",
         "relation",
         "label",
@@ -940,6 +941,7 @@
       ],
       "labels": {
         "task_id": "Task ID",
+        "task_title": "Task Title",
         "kind": "Kind",
         "relation": "Relation",
         "label": "Reference",
