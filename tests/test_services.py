@@ -58,7 +58,7 @@ def test_default_label(kind, href, body, expected):
 
 def test_seed_relations_are_well_formed():
     import json
-    seed = json.loads(SEED_RELATIONS.read_text())
+    seed = json.loads(SEED_RELATIONS.read_text(encoding="utf-8"))
     assert {r["forward"] for r in seed} == {"blocks", "relates to"}
     wordings = [w for r in seed for w in {r["forward"], r["backward"]}]
     assert wordings and len(wordings) == len({w.lower() for w in wordings}), "unique across both columns"

@@ -16,6 +16,7 @@ classifiers = [
     "Environment :: Web Environment",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -23,7 +24,7 @@ classifiers = [
     "Topic :: Office/Business :: Scheduling",
 ]
 dependencies = [
-    "mkio>=1.0,<2",  # Semantic Versioning from 1.0: the config format, protocol and clients are settled
+    "mkio>=1.0.1,<2",  # 1.0.1: run() survives Windows, whose loop has no signal handlers
     "mkui>=1.0,<2",  # mkui 1.x is built against mkio 1.x and refuses any other major
 ]
 

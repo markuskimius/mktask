@@ -27,13 +27,13 @@ class TestLoadConfig:
 
     def test_resolves_relative_static_against_toml_dir(self, tmp_path):
         toml = tmp_path / "custom.toml"
-        toml.write_text('name = "x"\n[static]\n"/" = "./www"\n')
+        toml.write_text('name = "x"\n[static]\n"/" = "./www"\n', encoding="utf-8")
         cfg = cli._load_config(toml)
         assert cfg["static"]["/"] == str((tmp_path / "www").resolve())
 
     def test_relative_static_is_not_cwd_relative(self, tmp_path, monkeypatch):
         toml = tmp_path / "custom.toml"
-        toml.write_text('name = "x"\n[static]\n"/" = "./www"\n')
+        toml.write_text('name = "x"\n[static]\n"/" = "./www"\n', encoding="utf-8")
         monkeypatch.chdir(tmp_path.parent)
         cfg = cli._load_config(toml)
         assert cfg["static"]["/"] == str((tmp_path / "www").resolve())
@@ -55,7 +55,7 @@ class TestLoadConfig:
 class TestFindConfig:
     def test_prefers_cwd(self, tmp_path, monkeypatch):
         local = tmp_path / "mktask.toml"
-        local.write_text("")
+        local.write_text("", encoding="utf-8")
         monkeypatch.chdir(tmp_path)
         assert cli._find_config() == str(local)
 
@@ -116,7 +116,7 @@ class TestMain:
 
     def test_explicit_config_path(self, tmp_path, monkeypatch):
         toml = tmp_path / "mine.toml"
-        toml.write_text("")
+        toml.write_text("", encoding="utf-8")
         (a, _) = self._run(monkeypatch, str(toml))
         assert a == (str(toml),)
 
@@ -299,3 +299,40 @@ class TestBanner:
         text = cli._banner({"host": "127.0.0.1", "port": 1, "db_path": ":memory:"}, {})
         assert "<dict>" in text
         assert "in-memory" in text
+
+
+class TestCheckPort:
+    def test_probes_like_the_server_on_windows(self, monkeypatch):
+        """SO_REUSEADDR means something else on Windows: bind over a live
+        listener. There the probe must set nothing, as asyncio's server does,
+        or a busy port passes the check and fails only inside start()."""
+        options: list[tuple] = []
+
+        class Spy(socket.socket):
+            def setsockopt(self, *args):
+                options.append(args)
+                super().setsockopt(*args)
+
+        def free_port() -> int:
+            with socket.socket() as s:
+                s.bind(("127.0.0.1", 0))
+                return s.getsockname()[1]
+
+        monkeypatch.setattr(socket, "socket", Spy)
+        monkeypatch.setattr(sys, "platform", "win32")
+        cli._check_port("127.0.0.1", free_port())
+        assert options == []
+
+        monkeypatch.setattr(sys, "platform", "linux")
+        cli._check_port("127.0.0.1", free_port())
+        assert options == [(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)]
+
+    def test_busy_port_exits_one(self, capsys):
+        with socket.socket() as blocker:
+            blocker.bind(("127.0.0.1", 0))
+            blocker.listen(1)
+            port = blocker.getsockname()[1]
+            with pytest.raises(SystemExit) as exc:
+                cli._check_port("127.0.0.1", port)
+        assert exc.value.code == 1
+        assert f"cannot listen on 127.0.0.1:{port}" in capsys.readouterr().err

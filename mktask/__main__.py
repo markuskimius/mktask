@@ -138,7 +138,11 @@ def _check_port(host: str, port: int) -> None:
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     try:
         with socket.socket(family, socket.SOCK_STREAM) as probe:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Bind the way asyncio's server will: SO_REUSEADDR on Unix, where
+            # it only frees TIME_WAIT ports, and nothing on Windows, where it
+            # would bind over a live listener and let a busy port pass.
+            if sys.platform != "win32":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind((host, port))
     except OSError as exc:
         print(f"Error: cannot listen on {host}:{port}: {exc.strerror or exc}", file=sys.stderr)

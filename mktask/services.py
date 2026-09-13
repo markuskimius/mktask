@@ -1061,7 +1061,9 @@ class TaskTransactions(TransactionService):
             path = self.files_dir / name
             try:
                 await asyncio.to_thread(os.unlink, path)
-            except FileNotFoundError:
+            except OSError:
+                # Already gone, or (Windows) still open for a response in
+                # flight: the next delete that orphans it tries again.
                 pass
 
     # ── Lookups ───────────────────────────────────────────────────────

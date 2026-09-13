@@ -48,12 +48,12 @@ MKUI_ACTIONS = {
 
 @pytest.fixture(scope="module")
 def app_config() -> dict:
-    return json.loads((STATIC / "app.json").read_text())
+    return json.loads((STATIC / "app.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
 def server_config() -> dict:
-    return tomllib.loads((PKG / "mktask.toml").read_text())
+    return tomllib.loads((PKG / "mktask.toml").read_text(encoding="utf-8"))
 
 
 def _walk(node):
@@ -133,7 +133,7 @@ def test_transaction_fields_are_declared(app_config, server_config):
 
 
 def test_index_imports_resolve():
-    html = (STATIC / "index.html").read_text()
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
     for path in re.findall(r'(?:import|href=|src=)\s*"(/[^"]+)"', html):
         if path.startswith("/mkui/"):
             import mkui
@@ -272,7 +272,7 @@ def test_selection_state_declared(app_config):
 
 def _task_fields() -> list:
     """The fields refs.js shows in the Detail pane's task block."""
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     block = re.search(r"const TASK_FIELDS = \[(.*?)\];", js, re.S)
     assert block, "refs.js declares the task block's fields"
     return re.findall(r'\["([a-z_]+)", "([^"]+)"\]', block.group(1))
@@ -306,12 +306,12 @@ def test_the_dialog_module_refs_js_imports_exists():
     A path this test does not see move is one the browser fails on silently."""
     import mkui
 
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     path = re.search(r'import\("(/mkui/src/[^"]+)"\)', js)
     assert path, "refs.js imports the dialog module"
     module = Path(mkui.static_dir) / path.group(1).removeprefix("/mkui/")
     assert module.is_file(), f"mkui has no {path.group(1)}"
-    assert "export function openDialog(" in module.read_text()
+    assert "export function openDialog(" in module.read_text(encoding="utf-8")
 
 
 def test_detail_toolbar_borrows_the_pane_dialogs(app_config):
@@ -330,7 +330,7 @@ def test_detail_toolbar_borrows_the_pane_dialogs(app_config):
         assert button, f"{name}: no {src['button']} button on the {src['pane']} pane"
         assert button["action"]["type"] == "dialog", f"{name} is not a dialog button"
         assert button["action"]["dialog"]["submit"]["op"] == expected[name]
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     for name in dialogs:
         assert f'"{name}"' in js, f"refs.js never opens {name}"
 
@@ -364,10 +364,10 @@ def test_statusbar_shows_name_and_server_version(app_config):
 
 def test_custom_widgets_are_registered(app_config):
     """Every non-text widget type is registered by a module index.html imports."""
-    html = (STATIC / "index.html").read_text()
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
     registered = set()
     for path in re.findall(r'import\s*"/static/([^"]+)"', html):
-        registered |= set(re.findall(r'registerWidget\("([a-z-]+)"', (STATIC / path).read_text()))
+        registered |= set(re.findall(r'registerWidget\("([a-z-]+)"', (STATIC / path).read_text(encoding="utf-8")))
     for pane_id, pane in app_config["panes"].items():
         for w in pane.get("widgets", []):
             if w["type"] != "text":
@@ -377,7 +377,7 @@ def test_custom_widgets_are_registered(app_config):
 def test_task_refs_widget_state_and_services(app_config, server_config):
     """refs.js reads the two published selections, calls only declared ops,
     and opens a linked task by selecting it in the Tasks pane."""
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     for root in ("selected_task", "selected_ref"):
         assert root in app_config["state"], root
         assert f'"{root}"' in js, f"refs.js does not read state.{root}"
@@ -397,7 +397,7 @@ def test_detail_pane_shows_the_selected_task_and_its_descendants(server_config):
     `all_tasks` for the parent/child edges, `task_refs` filtered to the
     subtree, server-side either way — and `state.selected_ref` only marks a
     line the list already shows."""
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     assert 'const REFS_SERVICE = "task_refs"' in js
     assert 'const TASKS_SERVICE = "all_tasks"' in js
     for service in ("REFS_SERVICE", "TASKS_SERVICE"):
@@ -420,8 +420,8 @@ def test_the_detail_pane_is_the_one_widget(app_config):
     with has a rule of its own."""
     pane = app_config["panes"]["task-detail"]
     assert [w["type"] for w in pane["widgets"]] == ["task-refs"], "one widget, no text widgets"
-    js = (STATIC / "refs.js").read_text()
-    css = (STATIC / "mktask.css").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
+    css = (STATIC / "mktask.css").read_text(encoding="utf-8")
     for cls in ("task-refs-toolbar", "task-refs-main", "task-refs-task", "task-refs-task-marked",
                 "task-refs-task-title", "task-refs-task-id", "task-refs-fields",
                 "task-refs-field-label", "task-refs-field-value"):
@@ -433,7 +433,7 @@ def test_the_toolbar_acts_on_the_pane_cursor(app_config):
     """One cursor over the body: the task block or a reference, whichever was
     clicked last. Edit follows it; Delete is a reference's alone, so a task is
     never deleted from the pane that shows its notes."""
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     assert '"mkui-table-toolbar task-refs-toolbar"' in js, "mkui's own toolbar classes"
     assert '"mkui-btn mkui-toolbar-btn"' in js, "mkui's own button classes"
     for label in ('toolbarBtn("Add URL"', 'toolbarBtn("Add Text"', 'toolbarBtn("Add Link"',
@@ -459,7 +459,7 @@ def test_snippets_come_before_the_files():
     above these — and `image` is a presentation of `file`, not a fifth kind."""
     from mktask.services import REF_KINDS
 
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     order = re.findall(r'\["([a-z]+)", "[A-Za-z]+"\]',
                        re.search(r"const SECTIONS = \[(.*?)\];", js).group(1))
     assert order == ["text", "image", "file", "url"], f"unexpected section order {order}"
@@ -472,8 +472,8 @@ def test_images_preview_as_a_grid_of_thumbnails(server_config):
     """An image reference shows as a thumbnail, not as a file name: images get
     their own section, told from other files by the stored mime, and the
     thumbnail is the file itself (mktask keeps no derived images)."""
-    js = (STATIC / "refs.js").read_text()
-    css = (STATIC / "mktask.css").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
+    css = (STATIC / "mktask.css").read_text(encoding="utf-8")
     assert '["image", "Images"]' in js and '["file", "Files"]' in js, "images sit apart from files"
     assert "mime" in server_config["tables"]["task_refs"]["columns"], "the section comes from the mime"
     assert 'isImage = (ref) => ref.kind === "file"' in js
@@ -490,7 +490,7 @@ def test_go_to_selects_the_linked_task(app_config):
     click does, so the Detail and References panes follow. No viewer pane."""
     import mkui
     assert tuple(int(x) for x in mkui.__version__.split(".")[:3]) >= (0, 2, 23)
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     assert 'fireAction("table.select"' in js
     assert 'app.fireAction("table.select", { pane: tasksPane, keys: [taskId] })' in js
     assert 'spec.tasksPane ?? "tasks"' in js, "targets the Tasks pane by default"
@@ -506,7 +506,7 @@ def test_go_to_selects_the_linked_task(app_config):
 def test_every_lookup_service_is_used_and_exists(app_config, server_config):
     """A reqrep is named by a dialog's optionsFrom or by refs.js, and every
     such name is a real reqrep: neither side goes stale on its own."""
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     wanted = set(re.findall(r'request\("([a-z_]+)"', js))
     wanted |= {n.get("optionsFrom", {}).get("service") for n in _walk(app_config["panes"])
                if isinstance(n, dict) and "optionsFrom" in n}
@@ -631,7 +631,7 @@ def test_detail_delete_borrows_the_red(app_config):
     button = next(b for b in app_config["panes"][src["pane"]]["buttons"]
                   if b["label"] == src["button"])
     assert any(r.get("when") == "enabled" for r in button["style"])
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     assert 'rule.when === "enabled"' in js, "refs.js reads the armed rule"
     assert "mkui-btn-styled" in js, "refs.js paints it the way mkui does"
 
@@ -655,7 +655,7 @@ def test_status_gates_on_complete_and_reopen(tasks_pane):
 
 def test_the_word_done_is_gone(app_config, server_config):
     """A task is open or complete; "done" is not a status, a label, or an op."""
-    text = json.dumps(app_config) + (PKG / "mktask.toml").read_text()
+    text = json.dumps(app_config) + (PKG / "mktask.toml").read_text(encoding="utf-8")
     assert not re.search(r"\bdone\b", text, re.IGNORECASE)
 
 
@@ -946,7 +946,7 @@ def test_assigned_to_is_picked_or_typed(app_config, server_config):
 def test_relations_are_seeded_from_the_package(server_config):
     table = server_config["tables"]["relations"]
     assert table["seed"] == "relations.json"
-    seed = json.loads((PKG / "relations.json").read_text())
+    seed = json.loads((PKG / "relations.json").read_text(encoding="utf-8"))
     assert {r["forward"] for r in seed} == {"blocks", "relates to"}
     wordings = [w for r in seed for w in {r["forward"], r["backward"]}]
     assert len(wordings) == len({w.lower() for w in wordings}), "seed wordings are unique"
@@ -955,7 +955,7 @@ def test_relations_are_seeded_from_the_package(server_config):
 
 def test_reference_kinds_match_the_service(server_config):
     from mktask.services import REF_KINDS
-    comment = (PKG / "mktask.toml").read_text()
+    comment = (PKG / "mktask.toml").read_text(encoding="utf-8")
     for kind in REF_KINDS:
         assert f'"{kind}"' in comment, f"kind {kind} is documented in the TOML"
     add_ref = server_config["services"]["tasks"]["ops"]["add_ref"][0]
@@ -1016,7 +1016,7 @@ def test_static_routes_resolve(server_config):
 
 
 def test_css_classes_used_by_widgets_exist(app_config):
-    css = (STATIC / "mktask.css").read_text()
+    css = (STATIC / "mktask.css").read_text(encoding="utf-8")
     for node in _walk(app_config["panes"]):
         if "class" in node and node.get("type") == "text":
             assert f".{node['class']}" in css, f"class {node['class']} has no CSS rule"
@@ -1118,7 +1118,7 @@ def test_actions_name_actions_mkui_registers(app_config):
             seen += 1
             assert item["action"] in MKUI_ACTIONS, f"unknown menu action {item['action']}"
     # refs.js fires its own, and they go stale the same way.
-    js = (STATIC / "refs.js").read_text()
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
     for name in set(re.findall(r'fireAction\("([a-z.]+)"', js)):
         seen += 1
         assert name in MKUI_ACTIONS, f"refs.js fires unknown action {name}"

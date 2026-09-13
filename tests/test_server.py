@@ -15,7 +15,7 @@ import pytest
 from mktask import __version__
 from mktask.services import SEED_RELATIONS
 
-SEED = json.loads(SEED_RELATIONS.read_text())
+SEED = json.loads(SEED_RELATIONS.read_text(encoding="utf-8"))
 WORDINGS = sorted({w for r in SEED for w in (r["forward"], r["backward"])})  # every direction of every seeded pair
 
 
@@ -2277,7 +2277,7 @@ class TestUpgrade:
         import sqlite3
         import tomllib
         cfg = tomllib.loads((__import__("pathlib").Path(__file__).resolve().parent.parent
-                             / "mktask" / "mktask.toml").read_text())
+                             / "mktask" / "mktask.toml").read_text(encoding="utf-8"))
         db = tmp_path / "old.db"
         con = sqlite3.connect(db)
         for name in ("tasks", "task_refs", "relations", "counters"):
