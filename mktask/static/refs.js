@@ -5,14 +5,17 @@
 // by relation, then snippets, images, files, and URLs.
 //
 // The pane has one cursor, over the task block or over a reference, and a
-// toolbar above it whose `Edit` opens the dialog that matches — the Tasks
-// pane's Edit dialog for the task, the References pane's for a reference —
-// while `Delete` is a reference's alone: a task is deleted from the blotter,
-// where the row you are deleting is the row you picked. **The dialogs are
-// borrowed from those panes by name** (`dialogs` in app.json), never copied,
-// so the two places a task is edited cannot drift apart. mkio-table draws
-// its toolbar itself and mkui has none for a widget pane, so this one is
-// drawn here with mkui's own classes.
+// toolbar above it. `Add URL`, `Add Text` and `Add Link` add a reference of that kind:
+// they open the References pane's own dialogs, whose Task picker defaults to
+// `state.selected_task` and asks when there is none, so they work with no
+// task selected at all. `Edit` opens the dialog that matches the cursor —
+// the Tasks pane's Edit dialog for the task, the References pane's for a
+// reference — while `Delete` is a reference's alone: a task is deleted from
+// the blotter, where the row you are deleting is the row you picked. **The
+// dialogs are borrowed from those panes by name** (`dialogs` in app.json),
+// never copied, so the two places a task is edited cannot drift apart.
+// mkio-table draws its toolbar itself and mkui has none for a widget pane,
+// so this one is drawn here with mkui's own classes.
 //
 // One instance, in the Detail pane. It reads `state.selected_task` (published
 // by the Tasks pane) and holds two live queries of its own — `all_tasks`, for
@@ -394,7 +397,14 @@ registerWidget("task-refs", (spec, app, host) => {
     toolbar.appendChild(btn);
     return btn;
   };
+  // The add dialogs read `state.selected_task` themselves; `row` is only
+  // context, and an empty one is what a table button with nothing selected
+  // passes. Nothing here gates them: the dialog asks for the task instead.
+  const addBorrowed = (name) => guarded(() => openBorrowed(name, task ?? {}));
   const editBtn = toolbarBtn("Edit", editCursor);
+  toolbarBtn("Add URL", addBorrowed("addUrl"));
+  toolbarBtn("Add Text", addBorrowed("addText"));
+  toolbarBtn("Add Link", addBorrowed("addLink"));
   const historyBtn = toolbarBtn("History", historyCursor);
   const deleteBtn = toolbarBtn("Delete", deleteCursor);
 

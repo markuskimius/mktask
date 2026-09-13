@@ -50,12 +50,17 @@ wrapping (`TKMA100000000` follows `TKMA99999999`).
 A task carries **references**: the things to refer back to while working on
 it. A reference is a URL (including `mailto:` and mail-client links), a
 pasted text snippet (an email, a chat exchange), a file (a screenshot, a
-PDF), or a **link to another task** with a **relation**. One Reference
-button adds any of them: pick the kind and the form follows, with the
-label suggested from the URL or the first line of the text. Files are
-added from the Detail pane instead: select a task and drop, paste, or pick
-a file there; an image pastes straight from the clipboard, a pasted URL
-becomes a URL reference, pasted text a snippet. The Detail pane opens with
+PDF), or a **link to another task** with a **relation**. The References
+pane's **Add URL**, **Add Text**, and **Add Link** buttons add one each, and the Detail
+pane has the same three. Each dialog opens on a **Task** picker already set
+to the task selected in the blotter — change it to file the reference on
+another task, or pick one when nothing is selected — with the label
+suggested from the URL or the first line of the text; once added, the
+blotter selects the task it went to, so the new reference is on show
+whichever task that was. Files are added from the Detail pane instead:
+select a task and drop, paste, or pick a file there; an image pastes
+straight from the clipboard, a pasted URL becomes a URL reference, pasted
+text a snippet. The Detail pane opens with
 the task itself — its status, importance, urgency, score, due date, who it is
 assigned to, and notes — and lists every reference of the selected task the moment it is selected,
 **and every reference of the tasks split from it** — a section per relation ("Blocks",
@@ -66,7 +71,8 @@ clicking a snippet or a URL opens it where it stands. The subtree comes from
 the tasks themselves, not from what the blotter is showing, so a completed
 child's references stay with its ancestor.
 
-**The Detail pane edits what it shows.** It has its own toolbar, and one
+**The Detail pane edits what it shows.** It has its own toolbar — *Add URL*,
+*Add Text*, and *Add Link* are the References pane's add buttons — and one
 cursor: click the task block or click a reference. *Edit* opens the dialog
 that matches — the same Edit dialog the blotter opens for a task, the same
 one the References pane opens for a reference — and *Delete* removes a
@@ -201,7 +207,9 @@ the column and the tables, and every row already there is recorded as its
 own version 1 so it can be stepped back to. Nothing has to be deleted. 0.9.0
 adds an `assigned_to` column and the `assignees` table behind the Assigned To
 dropdown, both of which `auto_migrate` adds to an existing database on first
-start; every task starts unassigned and the list starts empty.
+start; every task starts unassigned and the list starts empty. 0.10.0
+changes no schema: the Add URL / Add Text / Add Link dialogs read a new
+lookup service over the tables that were already there.
 
 ## Development
 

@@ -216,6 +216,7 @@
         "assigned_to",
         "status",
         "last_event",
+        "notes",
         "created_at",
         "_mkio_version"
       ],
@@ -229,7 +230,8 @@
         "status": "Status",
         "created_at": "Created",
         "last_event": "Last Event",
-        "assigned_to": "Assigned To"
+        "assigned_to": "Assigned To",
+        "notes": "Notes"
       },
       "values": {
         "score": "importance * urgency"
@@ -759,117 +761,6 @@
           }
         },
         {
-          "label": "Reference",
-          "unit": "row",
-          "enable": {
-            "connected": true
-          },
-          "action": {
-            "type": "dialog",
-            "dialog": {
-              "title": "Add ${IF(kind == 'task', 'task link', IF(kind == 'url', 'URL', 'text'))} to Task ID ${row.task_id}",
-              "modal": true,
-              "width": 460,
-              "fields": [
-                {
-                  "name": "task_id",
-                  "type": "hidden",
-                  "value": "${row.task_id}"
-                },
-                {
-                  "label": "Task",
-                  "type": "readonly",
-                  "value": "${row.title}"
-                },
-                {
-                  "name": "kind",
-                  "label": "Kind",
-                  "type": "select",
-                  "value": "url",
-                  "options": [
-                    {
-                      "value": "url",
-                      "label": "URL"
-                    },
-                    {
-                      "value": "text",
-                      "label": "Text snippet"
-                    },
-                    {
-                      "value": "task",
-                      "label": "Link to another task"
-                    }
-                  ]
-                },
-                {
-                  "name": "_url",
-                  "label": "URL",
-                  "type": "text",
-                  "required": true,
-                  "placeholder": "https://…, mailto:…",
-                  "showWhen": "kind == 'url'"
-                },
-                {
-                  "name": "body",
-                  "label": "Text",
-                  "type": "textarea",
-                  "required": true,
-                  "placeholder": "Paste the email or conversation here",
-                  "showWhen": "kind == 'text'"
-                },
-                {
-                  "name": "relation",
-                  "label": "This task …",
-                  "type": "select",
-                  "required": true,
-                  "showWhen": "kind == 'task'",
-                  "optionsFrom": {
-                    "service": "relation_options",
-                    "value": "value",
-                    "label": "label"
-                  }
-                },
-                {
-                  "name": "_task",
-                  "label": "… that task",
-                  "type": "select",
-                  "required": true,
-                  "showWhen": "kind == 'task'",
-                  "optionsFrom": {
-                    "service": "task_options",
-                    "params": {
-                      "task_id": "${row.task_id}"
-                    },
-                    "value": "value",
-                    "label": "label"
-                  }
-                },
-                {
-                  "name": "href",
-                  "type": "hidden",
-                  "compute": "IF(kind == 'task', _task, IF(kind == 'url', _url, ''))"
-                },
-                {
-                  "name": "label",
-                  "label": "Label",
-                  "type": "text",
-                  "showWhen": "kind != 'task'",
-                  "compute": "IF(kind == 'url', _url, FIRST(FILTER(SPLIT(body ?? '', '\\n'), l -> TRIM(l) != '')) ?? '')",
-                  "placeholder": "What to show for it"
-                }
-              ],
-              "footer": {
-                "note": "${IF(kind == 'task', 'The link shows on both tasks, worded from each side. Relations are edited under Configure › Relations.', 'Files: drop, paste, or pick them in the Detail pane.')}"
-              },
-              "submit": {
-                "label": "Add",
-                "service": "tasks",
-                "op": "add_ref"
-              }
-            }
-          }
-        },
-        {
           "label": "History",
           "unit": "row",
           "enable": {
@@ -1006,6 +897,18 @@
           "class": "task-detail-refs",
           "reveal": true,
           "dialogs": {
+            "addUrl": {
+              "pane": "references",
+              "button": "Add URL"
+            },
+            "addText": {
+              "pane": "references",
+              "button": "Add Text"
+            },
+            "addLink": {
+              "pane": "references",
+              "button": "Add Link"
+            },
             "editTask": {
               "pane": "tasks",
               "button": "Edit"
@@ -1073,6 +976,219 @@
         "state": "selected_ref"
       },
       "buttons": [
+        {
+          "label": "Add URL",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Add URL${IF(task_id == '', '', CONCAT(' to Task ID ', task_id))}",
+              "modal": true,
+              "width": 460,
+              "fields": [
+                {
+                  "name": "task_id",
+                  "label": "Task",
+                  "type": "select",
+                  "required": true,
+                  "value": "${state.selected_task.task_id}",
+                  "optionsFrom": {
+                    "service": "ref_owner_options",
+                    "value": "value",
+                    "label": "label"
+                  }
+                },
+                {
+                  "name": "kind",
+                  "type": "hidden",
+                  "value": "url"
+                },
+                {
+                  "name": "_url",
+                  "label": "URL",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "https://…, mailto:…"
+                },
+                {
+                  "name": "href",
+                  "type": "hidden",
+                  "compute": "_url"
+                },
+                {
+                  "name": "label",
+                  "label": "Label",
+                  "type": "text",
+                  "compute": "_url",
+                  "placeholder": "What to show for it"
+                }
+              ],
+              "footer": {
+                "note": "Files: drop, paste, or pick them in the Detail pane."
+              },
+              "submit": {
+                "label": "Add",
+                "service": "tasks",
+                "op": "add_ref",
+                "then": {
+                  "action": "table.select",
+                  "args": {
+                    "pane": "tasks",
+                    "keys": [
+                      "${task_id}"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "label": "Add Text",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Add text${IF(task_id == '', '', CONCAT(' to Task ID ', task_id))}",
+              "modal": true,
+              "width": 460,
+              "fields": [
+                {
+                  "name": "task_id",
+                  "label": "Task",
+                  "type": "select",
+                  "required": true,
+                  "value": "${state.selected_task.task_id}",
+                  "optionsFrom": {
+                    "service": "ref_owner_options",
+                    "value": "value",
+                    "label": "label"
+                  }
+                },
+                {
+                  "name": "kind",
+                  "type": "hidden",
+                  "value": "text"
+                },
+                {
+                  "name": "body",
+                  "label": "Text",
+                  "type": "textarea",
+                  "required": true,
+                  "placeholder": "Paste the email or conversation here"
+                },
+                {
+                  "name": "label",
+                  "label": "Label",
+                  "type": "text",
+                  "compute": "FIRST(FILTER(SPLIT(body ?? '', '\\n'), l -> TRIM(l) != '')) ?? ''",
+                  "placeholder": "What to show for it"
+                }
+              ],
+              "footer": {
+                "note": "Files: drop, paste, or pick them in the Detail pane."
+              },
+              "submit": {
+                "label": "Add",
+                "service": "tasks",
+                "op": "add_ref",
+                "then": {
+                  "action": "table.select",
+                  "args": {
+                    "pane": "tasks",
+                    "keys": [
+                      "${task_id}"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "label": "Add Link",
+          "enable": {
+            "connected": true
+          },
+          "action": {
+            "type": "dialog",
+            "dialog": {
+              "title": "Add task link${IF(task_id == '', '', CONCAT(' to Task ID ', task_id))}",
+              "modal": true,
+              "width": 460,
+              "fields": [
+                {
+                  "name": "task_id",
+                  "label": "Task",
+                  "type": "select",
+                  "required": true,
+                  "value": "${state.selected_task.task_id}",
+                  "optionsFrom": {
+                    "service": "ref_owner_options",
+                    "value": "value",
+                    "label": "label"
+                  }
+                },
+                {
+                  "name": "kind",
+                  "type": "hidden",
+                  "value": "task"
+                },
+                {
+                  "name": "relation",
+                  "label": "This task …",
+                  "type": "select",
+                  "required": true,
+                  "optionsFrom": {
+                    "service": "relation_options",
+                    "value": "value",
+                    "label": "label"
+                  }
+                },
+                {
+                  "name": "_task",
+                  "label": "… that task",
+                  "type": "select",
+                  "required": true,
+                  "optionsFrom": {
+                    "service": "task_options",
+                    "params": {
+                      "task_id": "${field.task_id}"
+                    },
+                    "value": "value",
+                    "label": "label"
+                  }
+                },
+                {
+                  "name": "href",
+                  "type": "hidden",
+                  "compute": "_task"
+                }
+              ],
+              "footer": {
+                "note": "The link shows on both tasks, worded from each side. Relations are edited under Configure › Relations."
+              },
+              "submit": {
+                "label": "Add",
+                "service": "tasks",
+                "op": "add_ref",
+                "then": {
+                  "action": "table.select",
+                  "args": {
+                    "pane": "tasks",
+                    "keys": [
+                      "${task_id}"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
         {
           "label": "Edit",
           "unit": "row",

@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "mkio>=0.5.0",   # versioned tables, undo/redo ops, on_undo_redo, `cause` on the wire
-    "mkui>=0.4.0",   # the mkio-history pane, history blocks, undo/redo buttons
+    "mkui>=0.8.0",   # submit.then: the reference dialogs select the task they filed on
 ]
 
 [project.optional-dependencies]

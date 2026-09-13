@@ -349,6 +349,21 @@ WHERE status = 'open' AND task_id != :task_id AND task_id NOT IN (SELECT task_id
 ORDER BY task_id
 """
 
+# The Task picker of the References pane's URL / Text / Link dialogs: every
+# task, open ones first, so a reference can be added to any task from a pane
+# that shows no task of its own. The dialog defaults it to the task selected
+# in the Tasks pane (`state.selected_task`); with nothing selected the picker
+# starts blank and `required` refuses the empty option. No params on purpose:
+# an optionsFrom param that resolves to '' empties the whole list, and the
+# no-selection case is exactly the one the picker exists for.
+[services.ref_owner_options]
+protocol = "reqrep"
+description = "Every task, open first, as value/label pairs for the reference dialogs' Task picker"
+sql = """
+SELECT task_id AS value, task_id || '  ' || title AS label FROM tasks
+ORDER BY status != 'open', lower(title), task_id
+"""
+
 # The Move dialog's parent picker: every open task the given task may be moved
 # under, first of all "__top__" for the top level. `down` is the task's own
 # subtree, which it cannot be moved into (a task cannot be its own

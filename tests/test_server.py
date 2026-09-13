@@ -164,7 +164,7 @@ class TestHttp:
                 names = {svc["name"] for svc in await resp.json()}
         assert {"tasks", "all_tasks", "task_refs", "all_relations", "relation_options",
                 "all_assignees", "assignee_options", "task_assignee_options",
-                "task_options", "move_options",
+                "task_options", "move_options", "ref_owner_options",
                 "mkui_layouts", "mkui_layouts_list", "mkui_layouts_get"} <= names
 
 
@@ -1052,6 +1052,25 @@ class TestTaskLinks:
                 got = {r["value"]: r["label"] for r in rows}
         assert a not in got and c not in got
         assert got[b] == f"{b}  Option other", "the picker labels a task by its title"
+
+    async def test_ref_owner_options_lists_every_task_open_first(self, server):
+        """The Task picker of the URL / Text / Link dialogs: every task, so a
+        reference can be added to any of them from the References pane, open
+        tasks first and each labelled by its title. No params — a param that
+        resolves to '' would empty the list, and the picker exists for the case
+        where nothing is selected."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                a = await _add(ws, "Owner beta", "ro1")
+                b = await _add(ws, "Owner alpha", "ro2")
+                c = await _add(ws, "Owner complete", "ro3")
+                await _complete(ws, c, "ro4")
+                await asyncio.sleep(0.2)
+                rows = await _request(ws, "ref_owner_options", {})
+        values = [r["value"] for r in rows]
+        assert values.index(b) < values.index(a) < values.index(c), "open first, then by title"
+        labels = {r["value"]: r["label"] for r in rows}
+        assert labels[a] == f"{a}  Owner beta" and labels[c] == f"{c}  Owner complete"
 
 
 class TestAssignees:
