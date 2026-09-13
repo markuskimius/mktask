@@ -35,51 +35,6 @@
           "label": "Activity",
           "action": "pane.show",
           "args": "activity"
-        },
-        {
-          "sep": true
-        },
-        {
-          "label": "Show Open Only",
-          "action": "table.filter",
-          "args": {
-            "pane": "tasks",
-            "filters": {
-              "status": [
-                "open"
-              ]
-            },
-            "merge": true
-          }
-        },
-        {
-          "label": "Show All",
-          "action": "table.filter",
-          "args": {
-            "pane": "tasks",
-            "filters": {
-              "status": null
-            },
-            "merge": true
-          }
-        },
-        {
-          "sep": true
-        },
-        {
-          "label": "Expand All",
-          "action": "table.expand",
-          "args": {
-            "pane": "tasks",
-            "depth": "all"
-          }
-        },
-        {
-          "label": "Collapse All",
-          "action": "table.expand",
-          "args": {
-            "pane": "tasks"
-          }
         }
       ]
     },

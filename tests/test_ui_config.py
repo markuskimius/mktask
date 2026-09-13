@@ -673,10 +673,12 @@ def test_open_only_filter_tests_every_row(tasks_pane):
     assert tasks_pane["filters"]["status"] == ["open"]
 
 
-def test_expand_menu_targets_the_tasks_pane(app_config):
-    items = {i["label"]: i for i in _walk(app_config["menubar"]) if i.get("action") == "table.expand"}
-    assert items["Expand All"]["args"] == {"pane": "tasks", "depth": "all"}
-    assert items["Collapse All"]["args"] == {"pane": "tasks"}
+def test_tasks_menu_carries_no_filter_or_expand_items(app_config):
+    """Show Open Only / Show All / Expand All / Collapse All were taken off the
+    Tasks menu; the pane's own toolbar is where filtering and expanding live."""
+    for item in _walk(app_config["menubar"]):
+        assert item.get("action") not in ("table.filter", "table.expand"), \
+            f"menu item {item['label']} reintroduces a filter/expand entry"
 
 
 # ─── References ────────────────────────────────────────────────────

@@ -214,6 +214,8 @@ changes no schema: the Add URL / Add Text / Add Link dialogs read a new
 lookup service over the tables that were already there. 0.11.0 changes no
 schema either: the References pane's Task Title is joined in by the
 `task_refs` query, which mkio 0.8.0 keeps live, so nothing new is stored.
+0.12.0 changes no schema: it only takes the Show Open Only / Show All /
+Expand All / Collapse All entries off the Tasks menu.
 
 ## Development
 
