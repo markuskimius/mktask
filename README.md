@@ -225,6 +225,8 @@ schema: it is the Windows release, and raises the mkio floor to 1.0.1.
 server runs on asyncio's selector loop on Windows, so the connections a
 browser opens ahead of a page load and drops no longer print a
 `ConnectionResetError` traceback each.
+0.13.3 raises it to mkio 1.1.1, whose Windows loop lets Ctrl+C stop the
+server at once instead of waiting for the next timer or packet.
 
 ## Development
 
@@ -251,7 +253,7 @@ dialogs its toolbar borrows, and the reference sections against the kinds
 the server accepts).
 
 Runs on Linux, macOS and Windows with the standard CPython 3.11+
-interpreter; Windows needs mkio 1.1.0 or later, which `pip install`
+interpreter; Windows needs mkio 1.1.1 or later, which `pip install`
 brings in. On Windows, Ctrl+C stops the server the same way as elsewhere.
 The Task ID prefix comes from the account name's first two ASCII letters
 or digits, so a name starting with a space or a non-ASCII letter still
