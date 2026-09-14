@@ -221,6 +221,10 @@ read from the same reply that checks the server is mktask. It is also the
 first release to require mkio and mkui 1.x (`pip install --upgrade mktask`
 brings them in); a 0.12.0 database carries over as is. 0.13.1 changes no
 schema: it is the Windows release, and raises the mkio floor to 1.0.1.
+0.13.2 changes no schema: it raises the floor to mkio 1.1.0, whose
+server runs on asyncio's selector loop on Windows, so the connections a
+browser opens ahead of a page load and drops no longer print a
+`ConnectionResetError` traceback each.
 
 ## Development
 
@@ -247,7 +251,7 @@ dialogs its toolbar borrows, and the reference sections against the kinds
 the server accepts).
 
 Runs on Linux, macOS and Windows with the standard CPython 3.11+
-interpreter; Windows needs mkio 1.0.1 or later, which `pip install`
+interpreter; Windows needs mkio 1.1.0 or later, which `pip install`
 brings in. On Windows, Ctrl+C stops the server the same way as elsewhere.
 The Task ID prefix comes from the account name's first two ASCII letters
 or digits, so a name starting with a space or a non-ASCII letter still

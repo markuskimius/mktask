@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Office/Business :: Scheduling",
 ]
 dependencies = [
-    "mkio>=1.0.1,<2",  # 1.0.1: run() survives Windows, whose loop has no signal handlers
+    "mkio>=1.1.0,<2",  # 1.1.0: run() on the selector loop on Windows (no traceback per dropped preconnect)
     "mkui>=1.0,<2",  # mkui 1.x is built against mkio 1.x and refuses any other major
 ]
 
