@@ -84,7 +84,7 @@ The References pane follows the
 selected tasks (mkui table linking; clear the selection to see every
 reference), each reference beside its task's Task ID and title (the title is
 joined in live: renaming the task updates the column), with URLs and files as
-links; selecting one there opens and marks
+links and a text snippet's body in the Text column; selecting one there opens and marks
 the same line in the Detail pane, and a reference the Detail pane does not
 list leaves it alone. A task link shows on both tasks, worded from each side,
 and *Go to* selects the linked task in the blotter, so the Detail and
@@ -230,6 +230,8 @@ server at once instead of waiting for the next timer or packet.
 0.13.4 changes no schema: it requires mkui 1.2.1, whose table redraws the
 expand caret of a task that gains its first child, or loses its last, by
 a Move; before, the caret stayed as it was until the row was redrawn.
+0.14.0 changes no schema: the References pane gains a Text column showing
+a text reference's body, which the `task_refs` query already returned.
 
 ## Development
 

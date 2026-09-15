@@ -809,6 +809,14 @@ def test_references_pane_shows_the_task_title(references_pane, server_config):
     assert "task_title" not in references_pane["history"]["columns"], "history is the row's own"
 
 
+def test_a_snippet_shows_its_text_in_the_references_pane(references_pane):
+    """A text reference is its body: the Reference column carries only the
+    label, so the body has a column of its own, right after it."""
+    columns = references_pane["columns"]
+    assert columns.index("body") == columns.index("label") + 1
+    assert references_pane["labels"]["body"] == "Text"
+
+
 def test_references_pane_shows_the_stored_wording(references_pane):
     label = references_pane["display"]["label"]
     assert "LINK(label, href)" in label, "a reference with an href is a hyperlink"

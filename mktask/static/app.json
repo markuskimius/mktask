@@ -891,6 +891,7 @@
         "kind",
         "relation",
         "label",
+        "body",
         "created_at",
         "_mkio_version"
       ],
@@ -900,6 +901,7 @@
         "kind": "Kind",
         "relation": "Relation",
         "label": "Reference",
+        "body": "Text",
         "created_at": "Added"
       },
       "display": {
