@@ -227,6 +227,9 @@ browser opens ahead of a page load and drops no longer print a
 `ConnectionResetError` traceback each.
 0.13.3 raises it to mkio 1.1.1, whose Windows loop lets Ctrl+C stop the
 server at once instead of waiting for the next timer or packet.
+0.13.4 changes no schema: it requires mkui 1.2.1, whose table redraws the
+expand caret of a task that gains its first child, or loses its last, by
+a Move; before, the caret stayed as it was until the row was redrawn.
 
 ## Development
 
