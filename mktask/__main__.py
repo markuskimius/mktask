@@ -211,35 +211,58 @@ def _find_config() -> str:
     sys.exit(1)
 
 
+_USAGE = """\
+mktask [config] [-p PORT] [--host HOST] [-d PATH] [-u USER] [--files DIR]
+       mktask --help | --version"""
+
+_DESCRIPTION = """\
+Work task prioritizer built on mkio and mkui. Starts a local web server and
+prints the URL to open in a browser (http://127.0.0.1:8080/ by default)."""
+
+_EXAMPLES = """\
+examples:
+  mktask                                  mktask.db here, on port 8080
+  mktask -d :memory: -p 9090 --user mark  a scratch run; nothing is kept
+  mktask -d ~/work --files ~/refs         ~/work.db, files under ~/refs"""
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         prog="mktask",
-        description="Work task prioritizer built on mkio and mkui",
+        usage=_USAGE,
+        description=_DESCRIPTION,
+        epilog=_EXAMPLES,
+        # Raw, so the examples keep their lines; the description is wrapped by hand.
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "config", nargs="?", default=None,
-        help="path to mktask.toml config file (default: ./mktask.toml, else the built-in one)",
+        help="mktask.toml to run (default: ./mktask.toml, else the packaged one)",
     )
     parser.add_argument(
         "-p", "--port", type=int, default=None,
-        help="override listening port",
+        help="listening port (default: the config's, 8080 as shipped)",
     )
     parser.add_argument(
         "--host", default=None,
-        help="override listening host",
+        help="listening host (default: the config's, 127.0.0.1 as shipped; there is no login, "
+             "so 0.0.0.0 shares your tasks with the network)",
     )
     parser.add_argument(
         "-d", "--db", default=None, metavar="PATH",
-        help="database filename (.db added if no extension; use ':memory:' for in-memory)",
+        help="database file (default: mktask.db in the current directory; .db added if no "
+             "extension; ':memory:' keeps nothing)",
     )
     parser.add_argument(
         "-u", "--user", default=None,
-        help="username whose first two letters prefix new Task IDs (default: the OS login name)",
+        help="your name: its first two letters or digits prefix new Task IDs, and it is "
+             "recorded in each task's activity (default: the OS login name)",
     )
     parser.add_argument(
         "--files", default=None, metavar="DIR",
-        help="directory for uploaded reference files (default: <db>.files beside the database)",
+        help="where uploaded reference files are kept (default: <db>.files beside the "
+             "database; a temporary directory with ':memory:')",
     )
     parser.add_argument(
         "--version", action="version", version=f"mktask {__version__}",

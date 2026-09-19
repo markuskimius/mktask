@@ -152,12 +152,15 @@ mktask [config] [-p PORT] [--host HOST] [-d PATH] [-u USER] [--files DIR] [--ver
 - `config` — path to a `mktask.toml`. Defaults to `./mktask.toml` if
   present, otherwise the one bundled with the package.
 - `-p, --port` — override the listening port (default 8080).
-- `--host` — override the listening host (default `127.0.0.1`).
-- `-d, --db` — database file; `.db` is appended when there is no
-  extension. `:memory:` runs without persistence.
+- `--host` — override the listening host (default `127.0.0.1`). mktask has
+  no login, so `0.0.0.0` shares your tasks with the network.
+- `-d, --db` — database file (default `mktask.db` in the current
+  directory); `.db` is appended when there is no extension. `:memory:` runs
+  without persistence.
 - `-u, --user` — the username whose first two alphanumeric characters,
   uppercased, prefix new Task IDs (`mark` → `TKMA…`; a one-character name is
-  padded with `X`). Defaults to the OS login name.
+  padded with `X`), and which is recorded as the actor in each task's
+  activity. Defaults to the OS login name.
 - `--files` — directory for uploaded reference files, served at `/files`.
   Defaults to `<db>.files` beside the database (`mktask.db.files/`), a
   temporary directory for `:memory:`.
@@ -232,6 +235,8 @@ expand caret of a task that gains its first child, or loses its last, by
 a Move; before, the caret stayed as it was until the row was redrawn.
 0.14.0 changes no schema: the References pane gains a Text column showing
 a text reference's body, which the `task_refs` query already returned.
+0.14.1 changes no schema: `mktask --help` says what the command starts,
+states every default, and ends with examples.
 
 ## Development
 

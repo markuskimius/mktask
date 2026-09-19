@@ -39,7 +39,7 @@ mktask/
                     click), "Go to" a linked task (table.select on the Tasks pane)
     mktask.css      app overrides on top of mkui.css
 tests/
-  test_cli.py       --help / --version / bad config path (subprocess)
+  test_cli.py       --help (unwrapped; defaults vs the TOML) / --version / bad flag, config path
   test_config.py    _load_config, _find_config, main() parsing, serve() overrides, --user → prefix,
                     --files / files dir derivation, banner
   test_services.py  user_prefix, format_task_id, TASK_ID_PATTERN, event_phrase (pure)
