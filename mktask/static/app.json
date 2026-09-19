@@ -1,7 +1,31 @@
 {
   "app": {
     "title": "mktask",
-    "theme": "dark"
+    "theme": "dark",
+    "description": "Work task prioritizer built on mkio and mkui",
+    "copyright": "© 2026 Mark Kim · Apache-2.0",
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/markuskimius/mktask"
+      },
+      {
+        "label": "Report an issue",
+        "href": "https://github.com/markuskimius/mktask/issues"
+      },
+      {
+        "label": "License",
+        "href": "https://github.com/markuskimius/mktask/blob/main/LICENSE"
+      }
+    ],
+    "about": {
+      "builtins": [
+        "server",
+        "mkui",
+        "mkio"
+      ],
+      "heading": "mktask${IF(state.mkio.server.version, CONCAT(' ', state.mkio.server.version), '')}"
+    }
   },
   "state": {
     "status": {
@@ -130,8 +154,82 @@
           "windows": true
         }
       ]
+    },
+    {
+      "label": "Help",
+      "items": [
+        {
+          "label": "Keyboard Shortcuts",
+          "action": "dialog.open",
+          "args": "shortcuts"
+        },
+        {
+          "sep": true
+        },
+        {
+          "label": "About",
+          "action": "dialog.about"
+        }
+      ]
     }
   ],
+  "dialogs": {
+    "shortcuts": {
+      "title": "Keyboard Shortcuts",
+      "kind": "info",
+      "width": 520,
+      "heading": "Tables and dialogs",
+      "facts": [
+        {
+          "label": "Ctrl/Cmd+C",
+          "value": "Copy the selected rows"
+        },
+        {
+          "label": "Ctrl/Cmd+A",
+          "value": "Select every row"
+        },
+        {
+          "label": "Ctrl/Cmd+F",
+          "value": "Find in the focused table"
+        },
+        {
+          "label": "Ctrl/Cmd+G",
+          "value": "Next match (with Shift: the previous one)"
+        },
+        {
+          "label": "Escape",
+          "value": "Clear the selection, or close a dialog that is not pinned"
+        },
+        {
+          "label": "Enter",
+          "value": "Submit a dialog from a single-line field"
+        },
+        {
+          "label": "Ctrl/Cmd+Enter",
+          "value": "Submit a dialog from anywhere in it"
+        },
+        {
+          "label": "Shift+click a header",
+          "value": "Sort by several columns"
+        },
+        {
+          "label": "Alt+Shift+Left / Right",
+          "value": "Move the active tab within its group"
+        },
+        {
+          "label": "Undo, Redo",
+          "value": "No key, on purpose: they change what everyone sees"
+        }
+      ],
+      "buttons": [
+        {
+          "label": "Close",
+          "cancel": true,
+          "default": true
+        }
+      ]
+    }
+  },
   "statusbar": {
     "left": [
       {

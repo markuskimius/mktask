@@ -134,6 +134,13 @@ moved, completed, reopened, references added, edited and deleted, and every
 undo and redo. It follows the blotter's selection like the References pane,
 and unlike the version record it is never rewritten.
 
+The **Help** menu has **Keyboard Shortcuts** — the keys the tables and
+dialogs answer to, and the reminder that Undo and Redo have none — and
+**About**: the version of the server you are connected to, the versions of
+mkui and mkio under it, links to the project, its issue tracker and its
+license, and **Copy details**, which puts all of it on the clipboard for a
+bug report.
+
 ## Quick start
 
 ```bash
@@ -237,6 +244,9 @@ a Move; before, the caret stayed as it was until the row was redrawn.
 a text reference's body, which the `task_refs` query already returned.
 0.14.1 changes no schema: `mktask --help` says what the command starts,
 states every default, and ends with examples.
+0.15.0 changes no schema: it adds the Help menu (Keyboard Shortcuts and
+About) and requires mkui 1.9.0, whose About box lets an app pick which of
+its built-in lines to show.
 
 ## Development
 

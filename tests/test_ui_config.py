@@ -43,6 +43,7 @@ MKUI_ACTIONS = {
     "edit.copy", "edit.selectAll", "edit.find", "edit.undo", "edit.redo",
     "table.filter", "table.sort", "table.columns", "table.link", "table.expand",
     "table.select", "table.history", "auth.logout",
+    "dialog.open", "dialog.alert", "dialog.confirm", "dialog.about", "dialog.resetSuppressed",
 }
 
 
@@ -301,9 +302,9 @@ def test_detail_pane_edits_what_the_blotter_edits(app_config, server_config):
 
 
 def test_the_dialog_module_refs_js_imports_exists():
-    """refs.js opens a dialog with mkui's own `openDialog`, which mkui does not
-    re-export from index.js — mkio-table reaches it by the same deep import.
-    A path this test does not see move is one the browser fails on silently."""
+    """refs.js opens a dialog with mkui's own `openDialog`, deep-imported on
+    first use the way mkio-table reaches it. A path this test does not see
+    move is one the browser fails on silently."""
     import mkui
 
     js = (STATIC / "refs.js").read_text(encoding="utf-8")
@@ -360,6 +361,126 @@ def test_statusbar_shows_name_and_server_version(app_config):
     texts = [w["text"] for w in app_config["statusbar"]["right"] if w.get("type") == "text"]
     assert any(t.startswith("mktask") and "state.mkio.server.version" in t for t in texts), texts
     assert "version" not in app_config["mkio"]["expect"]
+
+
+def test_help_menu_opens_the_about_box(app_config):
+    """Help is the last menu and About fires mkui's own `dialog.about`, which
+    builds the box from the `app` block -- so there is no About pane to keep."""
+    assert app_config["menubar"][-1]["label"] == "Help"
+    items = [i for i in app_config["menubar"][-1]["items"] if "label" in i]
+    assert [i["label"] for i in items] == ["Keyboard Shortcuts", "About"], "About closes the menu"
+    about = items[-1]
+    assert about["action"] == "dialog.about" and "args" not in about
+    assert "about" not in app_config["panes"]
+
+
+def test_menu_dialogs_exist_and_are_all_reachable(app_config):
+    """`dialog.open` names a box under the top-level `dialogs`; mkui only
+    warns on a name it cannot find, and a box no menu opens is dead config."""
+    opened = {i["args"] for i in _walk(app_config["menubar"]) if i.get("action") == "dialog.open"}
+    assert opened == set(app_config["dialogs"])
+
+
+def test_shortcuts_box_lists_every_menu_shortcut(app_config):
+    """The box and the menus cannot disagree: every `shortcut` hint on a menu
+    item is a line of it. Undo and Redo carry no hint -- mkui binds them no
+    key, because they write to state everyone shares -- and the box says so."""
+    box = app_config["dialogs"]["shortcuts"]
+    keys = {f["label"]: f["value"] for f in box["facts"]}
+    assert all(f["value"] for f in box["facts"])
+    for item in _walk(app_config["menubar"]):
+        if "shortcut" in item:
+            assert item["shortcut"].replace("mod+", "Ctrl/Cmd+") in keys, item["label"]
+        if item.get("action") in ("edit.undo", "edit.redo"):
+            assert "shortcut" not in item
+    assert keys["Undo, Redo"].startswith("No key"), "the absence is deliberate, so it is stated"
+    assert [b for b in box["buttons"] if b.get("cancel")], "Escape and the close box need a button to mean"
+
+
+def test_about_box_carries_no_version_of_its_own(app_config):
+    """mkui heads the About box with `app.title` and `app.version`. app.json
+    cannot know its own version, so there is no `app.version` and the heading
+    is the statusbar's template over the version the server announced."""
+    app = app_config["app"]
+    assert "version" not in app, "a version in app.json goes stale on the next release"
+    heading = app["about"]["heading"]
+    assert heading.startswith("mktask") and "state.mkio.server.version" in heading
+    right = [w["text"] for w in app_config["statusbar"]["right"] if w.get("type") == "text"]
+    assert heading in right, "one wording of the name and version, not two"
+    # Connection is left out: the statusbar already says it, all the time.
+    assert app["about"]["builtins"] == ["server", "mkui", "mkio"]
+    assert app["description"] and "Apache-2.0" in app["copyright"]
+    assert app["links"], "the box is where the project's URLs live"
+    assert any(link["href"].endswith("/LICENSE") for link in app["links"]), "the license it names, a click away"
+    for link in app["links"]:
+        assert link["label"] and link["href"].startswith("https://"), link
+
+
+#: What mkui's `aboutSpec` reads from `app.about`, and what a message box
+#: spec, one of its facts and one of its buttons may carry. mkui ignores a key
+#: it does not know without a word, so a typo would only ever show up here.
+ABOUT_KEYS = {"title", "heading", "message", "image", "links", "width", "facts", "builtins"}
+MESSAGE_BOX_KEYS = {
+    "title", "kind", "heading", "message", "image", "facts", "links", "details", "width", "height",
+    "buttons", "fields", "id", "modal", "suppress", "timeout",
+}
+FACT_KEYS = {"label", "value", "showWhen"}
+BUTTON_KEYS = {
+    "id", "label", "kind", "cancel", "default", "submit", "op", "copy", "enable", "arm",
+    "action", "args", "set",
+}
+MESSAGE_BOX_KINDS = {"info", "success", "warn", "danger", "question"}
+
+
+def _mkui_source(path: str) -> str:
+    import mkui
+
+    return (Path(mkui.static_dir) / path).read_text(encoding="utf-8")
+
+
+def test_about_and_message_box_keys_are_ones_mkui_reads(app_config):
+    assert set(app_config["app"]["about"]) <= ABOUT_KEYS
+    for name, box in app_config["dialogs"].items():
+        assert set(box) <= MESSAGE_BOX_KEYS, f"dialogs.{name}: {set(box) - MESSAGE_BOX_KEYS}"
+        assert box["kind"] in MESSAGE_BOX_KINDS
+        assert box["title"], "the frame's tab needs a name"
+        assert box.get("message") or box.get("heading"), "with neither, mkui draws a form, not a message box"
+        for fact in box.get("facts", []):
+            assert set(fact) <= FACT_KEYS and fact["label"] and fact["value"], fact
+        labels = [f["label"] for f in box.get("facts", [])]
+        assert len(labels) == len(set(labels)), "a key listed twice"
+        for button in box["buttons"]:
+            assert set(button) <= BUTTON_KEYS and button["label"], button
+        assert len([b for b in box["buttons"] if b.get("cancel")]) == 1, "one way out for Escape"
+    # The sets above are hand-kept: hold them to the mkui that is installed.
+    dialogs_js = _mkui_source("src/lib/dialogs.js")
+    for key in app_config["app"]["about"]:
+        assert f"about.{key}" in dialogs_js, f"mkui's aboutSpec never reads app.about.{key}"
+
+
+def test_about_builtins_are_lines_mkui_has(app_config):
+    """`app.about.builtins` as a list arrived in mkui 1.9.0. An older mkui
+    takes the list for `true` and shows every line in its own order, without a
+    word -- so the floor in pyproject.toml is part of the feature."""
+    dialogs_js = _mkui_source("src/lib/dialogs.js")
+    assert "Array.isArray(about.builtins)" in dialogs_js, "this mkui cannot pick its About lines"
+    for name in app_config["app"]["about"]["builtins"]:
+        assert re.search(rf"^\s*{name}: {{ label:", dialogs_js, re.M), f"mkui has no About line named {name}"
+    project = tomllib.loads((PKG.parent / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    pin = next(d for d in project["dependencies"] if d.startswith("mkui"))
+    floor = tuple(int(n) for n in re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", pin).groups())
+    assert floor >= (1, 9, 0), pin
+    assert "<2" in pin, "mkui 1.x is built against mkio 1.x"
+
+
+def test_known_actions_are_ones_the_installed_mkui_registers():
+    """MKUI_ACTIONS is hand-kept; every other test trusts it."""
+    import mkui
+
+    registered = set()
+    for js in (Path(mkui.static_dir) / "src").rglob("*.js"):
+        registered |= set(re.findall(r'registerAction\("([A-Za-z.]+)"', js.read_text(encoding="utf-8")))
+    assert MKUI_ACTIONS <= registered, MKUI_ACTIONS - registered
 
 
 def test_custom_widgets_are_registered(app_config):

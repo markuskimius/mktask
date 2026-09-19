@@ -25,7 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "mkio>=1.1.1,<2",  # 1.1.1: run() on the selector loop on Windows, no preconnect tracebacks, Ctrl+C at once
-    "mkui>=1.2.1,<2",  # 1.2.1: a Move redraws both parents' expand carets; mkui 1.x is built against mkio 1.x and refuses any other major
+    "mkui>=1.9.0,<2",  # 1.9.0: dialog.about takes a `builtins` list, the About box's lines and their order; mkui 1.x is built against mkio 1.x and refuses any other major
 ]
 
 [project.optional-dependencies]
