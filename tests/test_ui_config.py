@@ -152,6 +152,21 @@ def test_no_version_in_server_toml(server_config):
     assert "version" not in server_config
 
 
+def test_expected_expr_is_the_installed_mkio_language(app_config):
+    """`mkio.expect.expr` is compared exactly, not by semver: a language bump
+    in mkio paints the statusbar 'Server mismatch' until the pin follows it.
+    The floor in pyproject.toml must reach the mkio that speaks that version,
+    or a fresh install shows the same mismatch the other way round."""
+    from mkio.expr import LANGUAGE_VERSION
+
+    assert app_config["mkio"]["expect"]["expr"] == LANGUAGE_VERSION
+    project = tomllib.loads((PKG.parent / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    pin = next(d for d in project["dependencies"] if d.startswith("mkio"))
+    floor = tuple(int(n) for n in re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", pin).groups())
+    assert floor >= (1, 5, 0), f"expression language 2 arrived in mkio 1.5.0: {pin}"
+    assert "<2" in pin
+
+
 # ─── Column and state references ───────────────────────────────────
 
 @pytest.fixture(scope="module")

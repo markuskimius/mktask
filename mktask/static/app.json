@@ -1800,7 +1800,7 @@
     "url": "auto",
     "expect": {
       "name": "mktask",
-      "expr": "1"
+      "expr": "2"
     },
     "connected": {
       "status.message": "Connected",

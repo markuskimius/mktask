@@ -247,6 +247,10 @@ states every default, and ends with examples.
 0.15.0 changes no schema: it adds the Help menu (Keyboard Shortcuts and
 About) and requires mkui 1.9.0, whose About box lets an app pick which of
 its built-in lines to show.
+0.15.1 changes no schema: it expects expression language 2 from the
+server, which mkio 1.5.0 introduced, and raises the mkio floor to match;
+against mkio 1.5.0 or later, 0.15.0 showed "Server mismatch" on the
+statusbar.
 
 ## Development
 

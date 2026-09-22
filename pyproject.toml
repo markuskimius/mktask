@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Office/Business :: Scheduling",
 ]
 dependencies = [
-    "mkio>=1.1.1,<2",  # 1.1.1: run() on the selector loop on Windows, no preconnect tracebacks, Ctrl+C at once
+    "mkio>=1.5.0,<2",  # 1.5.0: expression language 2, which app.json's mkio.expect.expr pins exactly
     "mkui>=1.9.0,<2",  # 1.9.0: dialog.about takes a `builtins` list, the About box's lines and their order; mkui 1.x is built against mkio 1.x and refuses any other major
 ]
 
