@@ -163,7 +163,10 @@ def test_expected_expr_is_the_installed_mkio_language(app_config):
     project = tomllib.loads((PKG.parent / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     pin = next(d for d in project["dependencies"] if d.startswith("mkio"))
     floor = tuple(int(n) for n in re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", pin).groups())
-    assert floor >= (1, 5, 0), f"expression language 2 arrived in mkio 1.5.0: {pin}"
+    # 1.5.0 brought expression language 2; 1.6.0 sends `Cache-Control:
+    # no-cache` on every file it serves, so a browser revalidates mkui's
+    # modules instead of running a cached copy for days after an upgrade.
+    assert floor >= (1, 6, 0), f"served files revalidate from mkio 1.6.0: {pin}"
     assert "<2" in pin
 
 
@@ -409,6 +412,15 @@ def test_shortcuts_box_lists_every_menu_shortcut(app_config):
         if item.get("action") in ("edit.undo", "edit.redo"):
             assert "shortcut" not in item
     assert keys["Undo, Redo"].startswith("No key"), "the absence is deliberate, so it is stated"
+    # "Shift+click a caret" promises that a second shift-click on the header
+    # caret folds every level, which mkui does from 1.13.0: the floor in
+    # pyproject.toml must reach it, or a fresh install shows a line that lies.
+    assert "Shift+click a caret" in keys and "fold" in keys["Shift+click a caret"]
+    project = tomllib.loads((PKG.parent / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    pin = next(d for d in project["dependencies"] if d.startswith("mkui"))
+    floor = tuple(int(n) for n in re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", pin).groups())
+    assert floor >= (1, 13, 0), f"a second shift-click folds all from mkui 1.13.0: {pin}"
+    assert "<2" in pin
     assert [b for b in box["buttons"] if b.get("cancel")], "Escape and the close box need a button to mean"
 
 
@@ -808,7 +820,9 @@ def test_tree_links_real_columns(tasks_pane, task_columns):
     assert tree["child"] == "parent_task_id" and tree["parent"] == "task_id"
     assert {tree["child"], tree["parent"]} <= task_columns
     assert tree["column"] in tasks_pane["columns"]
-    assert tree["expand"] == "all" or isinstance(tree["expand"], int)
+    # The blotter opens on the top level: a carets-only view of the roots,
+    # each unfolded by hand. "all" would put every child on screen at start.
+    assert tree["expand"] == 0
     assert tree["filterScope"] in ("roots", "children", "all")
 
 

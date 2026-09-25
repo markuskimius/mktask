@@ -9,9 +9,10 @@
     import "/mkui/src/index.js";
     import "/static/refs.js";   // registers the task-refs widget
 
-    // Revalidate rather than trust heuristic freshness: mkio serves static
-    // files without Cache-Control, so a stale app.json silently pins the UI
-    // to an old layout.
+    // Revalidate rather than trust heuristic freshness: before mkio 1.6.0
+    // static files carried no Cache-Control, and a stale app.json silently
+    // pinned the UI to an old layout. Kept: it costs a 304 and guards
+    // against a proxy of its own mind.
     const res = await fetch("/static/app.json", { cache: "no-cache" });
     const config = await res.json();
     const wsProto = location.protocol === "https:" ? "wss:" : "ws:";

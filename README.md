@@ -16,7 +16,11 @@ most pressing work floats to the top.
 
 A task can be **split** into child tasks, and a child can be split again, to
 any depth. The blotter nests children under their parent, each level sorted
-by score, with carets to fold a subtree away. Completing a task completes
+by score. It opens on the top level, every subtree folded behind its caret;
+click one to unfold a task's children (shift-click for the whole subtree;
+the header caret does every root, shift-clicked every level, and shift-clicked
+again folds the lot), and a task split under a folded parent
+waits behind that caret. Completing a task completes
 everything split from it; reopening a child reopens its ancestors; deleting a
 task deletes its whole subtree — permanently, and it is the one thing here
 that cannot be undone.
@@ -251,6 +255,13 @@ its built-in lines to show.
 server, which mkio 1.5.0 introduced, and raises the mkio floor to match;
 against mkio 1.5.0 or later, 0.15.0 showed "Server mismatch" on the
 statusbar.
+0.16.0 changes no schema: the blotter opens on the top level, every
+subtree folded behind its caret, and it requires mkui 1.13.0, whose header
+caret folds every level on a second shift-click (the Keyboard Shortcuts box
+says so). It also raises the mkio floor to 1.6.0, the first mkio to send
+`Cache-Control: no-cache` on the files it serves: before it a browser could
+keep running an old mkui table for days after an upgrade, which is how a
+caret bug mkui fixed in 1.2.1 went on being seen.
 
 ## Development
 

@@ -213,6 +213,10 @@
           "value": "Sort by several columns"
         },
         {
+          "label": "Shift+click a caret",
+          "value": "Unfold every level under it, or fold them all; on the header caret, the whole blotter"
+        },
+        {
           "label": "Alt+Shift+Left / Right",
           "value": "Move the active tab within its group"
         },
@@ -300,7 +304,7 @@
         "child": "parent_task_id",
         "parent": "task_id",
         "column": "task_id",
-        "expand": "all",
+        "expand": 0,
         "filterScope": "all"
       },
       "sort": [
