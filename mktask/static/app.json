@@ -954,17 +954,17 @@
           "class": "task-detail-refs",
           "reveal": true,
           "dialogs": {
-            "addUrl": {
+            "addLink": {
               "pane": "references",
-              "button": "Add URL"
+              "button": "Add Link"
             },
             "addText": {
               "pane": "references",
               "button": "Add Text"
             },
-            "addLink": {
+            "referenceTask": {
               "pane": "references",
-              "button": "Add Link"
+              "button": "Reference Task"
             },
             "editTask": {
               "pane": "tasks",
@@ -1007,6 +1007,7 @@
         "created_at": "Added"
       },
       "display": {
+        "kind": "${IF(kind == 'url', 'link', kind)}",
         "label": "${IF(kind == 'task', CONCAT(href, '  ', label), IF(href == '', label, LINK(label, href)))}"
       },
       "types": {
@@ -1038,14 +1039,14 @@
       },
       "buttons": [
         {
-          "label": "Add URL",
+          "label": "Add Link",
           "enable": {
             "connected": true
           },
           "action": {
             "type": "dialog",
             "dialog": {
-              "title": "Add URL${IF(task_id == '', '', CONCAT(' to Task ID ', task_id))}",
+              "title": "Add link${IF(task_id == '', '', CONCAT(' to Task ID ', task_id))}",
               "modal": true,
               "width": 460,
               "fields": [
@@ -1171,14 +1172,14 @@
           }
         },
         {
-          "label": "Add Link",
+          "label": "Reference Task",
           "enable": {
             "connected": true
           },
           "action": {
             "type": "dialog",
             "dialog": {
-              "title": "Add task link${IF(task_id == '', '', CONCAT(' to Task ID ', task_id))}",
+              "title": "Reference a task${IF(task_id == '', '', CONCAT(' from Task ID ', task_id))}",
               "modal": true,
               "width": 460,
               "fields": [
@@ -1231,7 +1232,7 @@
                 }
               ],
               "footer": {
-                "note": "The link shows on both tasks, worded from each side. Relations are edited under Configure › Relations."
+                "note": "The reference shows on both tasks, worded from each side. Relations are edited under Configure › Relations."
               },
               "submit": {
                 "label": "Add",
@@ -1259,7 +1260,7 @@
           "action": {
             "type": "dialog",
             "dialog": {
-              "title": "Edit ${IF(row.kind == 'task', 'task link', row.kind)} reference",
+              "title": "Edit ${IF(row.kind == 'url', 'link', row.kind)} reference",
               "modal": true,
               "width": 460,
               "fields": [
@@ -1279,7 +1280,7 @@
                   "value": "${row.task_id}"
                 },
                 {
-                  "label": "Linked task",
+                  "label": "Related task",
                   "type": "readonly",
                   "value": "${row.href}  ${row.label}",
                   "showWhen": "row.kind == 'task'"
@@ -1369,7 +1370,7 @@
                   "value": "${row.ref_id}"
                 },
                 {
-                  "label": "Remove this reference from Task ID ${row.task_id}? A task link is removed from both tasks.",
+                  "label": "Remove this reference from Task ID ${row.task_id}? A task reference is removed from both tasks.",
                   "type": "readonly",
                   "value": "${row.label}"
                 },
@@ -1475,7 +1476,7 @@
                 }
               ],
               "footer": {
-                "note": "A link reads \"A ${forward ?? '…'} B\" on one task and \"B ${IF(TRIM(backward ?? '') == '', forward ?? '…', backward)} A\" on the other."
+                "note": "A task reference reads \"A ${forward ?? '…'} B\" on one task and \"B ${IF(TRIM(backward ?? '') == '', forward ?? '…', backward)} A\" on the other."
               },
               "submit": {
                 "label": "Create",
@@ -1531,7 +1532,7 @@
                 }
               ],
               "footer": {
-                "note": "Renaming rewrites every link that uses this relation."
+                "note": "Renaming rewrites every task reference that uses this relation."
               },
               "submit": {
                 "label": "Save",
@@ -1567,7 +1568,7 @@
                   "value": "${row.relation_id}"
                 },
                 {
-                  "label": "Delete this relation? Refused while any link uses it.",
+                  "label": "Delete this relation? Refused while any task reference uses it.",
                   "type": "readonly",
                   "value": "${row.forward} / ${row.backward}"
                 }

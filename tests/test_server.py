@@ -578,9 +578,9 @@ class TestMove:
                 parents = await self._parents(ws, "mc-s2")
         assert parents["MC-root"] == "" and parents["MC-child"] == root, "a refused move writes nothing"
 
-    async def test_move_refuses_to_swallow_a_task_link(self, server):
-        """`add_ref` forbids a link inside one tree, so a move that would
-        create one is refused rather than silently dropping the link."""
+    async def test_move_refuses_to_swallow_a_task_reference(self, server):
+        """`add_ref` forbids a task reference inside one tree, so a move that would
+        create one is refused rather than silently dropping the task reference."""
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 root = await _add(ws, "ML-root", "ml1")
@@ -592,7 +592,7 @@ class TestMove:
                 await asyncio.sleep(0.2)
 
                 r = await self._move(ws, root, other, "ml5", expect="error")
-                assert "blocks" in r["message"] and "(1 link)" in r["message"]
+                assert "blocks" in r["message"] and r["message"].endswith("(1 reference). Remove first.")
                 parents = await self._parents(ws, "ml-s2")
                 assert parents["ML-root"] == ""
 
@@ -602,7 +602,7 @@ class TestMove:
                 await self._move(ws, root, other, "ml7")
                 await asyncio.sleep(0.2)
                 parents = await self._parents(ws, "ml-s3")
-        assert parents["ML-root"] == other, "the move goes through once the link is gone"
+        assert parents["ML-root"] == other, "the move goes through once the task reference is gone"
 
     async def test_move_reopens_a_complete_new_parent(self, server):
         """Open work may not hang under a complete parent: the new ancestors reopen."""
@@ -772,7 +772,7 @@ class TestReferences:
                 r = await _add_ref(ws, task, "rv3", expect="error", kind="bogus", href="h")
                 assert "kind" in r["message"]
                 r = await _add_ref(ws, task, "rv4", expect="error", kind="url", href="")
-                assert "URL" in r["message"]
+                assert r["message"] == "A link needs a URL"
                 r = await _add_ref(ws, task, "rv5", expect="error", kind="text", body="  ")
                 assert "text" in r["message"]
                 r = await _add_ref(ws, task, "rv6", expect="error", kind="file", href="elsewhere.png")
@@ -793,7 +793,7 @@ class TestReferences:
                                             "href": "https://b", "updated_at": NOW}, "re5")
                 r = await _txn(ws, "edit_ref", {"ref_id": rows["url"]["ref_id"], "label": "x",
                                                 "href": "", "updated_at": NOW}, "re6", expect="error")
-                assert "URL" in r["message"]
+                assert r["message"] == "A link needs a URL"
                 await asyncio.sleep(0.2)
                 after = {r["kind"]: r for r in await _refs(ws, task)}
         assert after["file"]["label"] == "Spec"
@@ -945,8 +945,8 @@ class TestSubtreeReferences:
             assert {k for k in row if not k.startswith("_mkio_")} == {"task_id", "parent_task_id", "title"}
 
 
-class TestTaskLinks:
-    async def test_link_writes_both_sides(self, server):
+class TestTaskReferences:
+    async def test_a_task_reference_writes_both_sides(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Blocker", "tl1")
@@ -959,17 +959,17 @@ class TestTaskLinks:
         assert (rb["kind"], rb["relation"], rb["href"], rb["label"]) == ("task", "blocked by", a, "Blocker")
         assert ra["ref_id"] != rb["ref_id"]
 
-    async def test_link_validation_writes_nothing(self, server):
+    async def test_task_reference_validation_writes_nothing(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Lonely", "tv1")
                 b = await _add(ws, "Other", "tv2")
                 r = await _add_ref(ws, a, "tv3", expect="error", kind="task", relation="relates to", href=a)
-                assert "itself" in r["message"]
+                assert r["message"] == "A task cannot be related to itself"
                 r = await _add_ref(ws, a, "tv4", expect="error", kind="task", relation="eats", href=b)
                 assert "relation" in r["message"]
                 r = await _add_ref(ws, a, "tv5", expect="error", kind="task", relation="blocks", href="TKMA99999998")
-                assert "no task" in r["message"]
+                assert r["message"].startswith("Cannot relate: no task")
                 await _add_ref(ws, a, "tv6", kind="task", relation="blocks", href=b)
                 r = await _add_ref(ws, a, "tv7", expect="error", kind="task", relation="blocks", href=b)
                 assert "already blocks" in r["message"]
@@ -978,10 +978,10 @@ class TestTaskLinks:
                 assert len(await _refs(ws, a)) == 2
                 assert len(await _refs(ws, b)) == 2
 
-    async def test_no_link_within_a_tree(self, server):
+    async def test_no_task_reference_within_a_tree(self, server):
         """Splitting already relates a task to everything in its tree — its
         ancestors, its descendants, and every descendant of an ancestor — so
-        a link may only join tasks from different trees."""
+        a task reference may only join tasks from different trees."""
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 root = await _add(ws, "Tree root", "ta1")
@@ -1004,13 +1004,13 @@ class TestTaskLinks:
                     for relation in WORDINGS:
                         r = await _add_ref(ws, a, f"ta-{a}-{b}-{relation}", expect="error",
                                            kind="task", relation=relation, href=b)
-                        assert word in r["message"], r
+                        assert r["message"].startswith("Cannot relate: ") and word in r["message"], r
                 await _add_ref(ws, grandchild, "ta8", kind="task", relation="relates to", href=other)  # another tree: fine
                 await asyncio.sleep(0.2)
                 assert len(await _refs(ws, grandchild)) == 1
                 for t in (root, child, uncle):
                     assert await _refs(ws, t) == []
-                # the Link dialog's picker leaves the whole tree out too
+                # the Reference Task dialog's picker leaves the whole tree out too
                 for t in (root, child, uncle, grandchild):
                     got = {r["value"] for r in await _request(ws, "task_options", {"task_id": t})}
                     assert other in got, t
@@ -1018,11 +1018,11 @@ class TestTaskLinks:
                 got = {r["value"] for r in await _request(ws, "task_options", {"task_id": other})}
                 assert {root, child, uncle, grandchild} <= got
 
-    async def test_unlink_removes_both_sides(self, server):
+    async def test_removing_a_task_reference_removes_both_sides(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
-                a = await _add(ws, "Unlink A", "tu1")
-                b = await _add(ws, "Unlink B", "tu2")
+                a = await _add(ws, "Remove A", "tu1")
+                b = await _add(ws, "Remove B", "tu2")
                 await _add_ref(ws, a, "tu3", kind="task", relation="relates to", href=b)
                 await asyncio.sleep(0.2)
                 [rb] = await _refs(ws, b)
@@ -1031,7 +1031,7 @@ class TestTaskLinks:
                 assert await _refs(ws, a) == []
                 assert await _refs(ws, b) == []
 
-    async def test_link_label_follows_the_linked_task(self, server):
+    async def test_label_follows_the_related_task(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Old title", "tt1")
@@ -1041,15 +1041,16 @@ class TestTaskLinks:
                 await _txn(ws, "edit", {"task_id": a, "title": "New title", "notes": "", "importance": 3,
                                         "urgency": 3, "due": "", "assigned_to": "",
                                         "updated_at": NOW}, "tt4")
+                await asyncio.sleep(0.2)  # the relabel is announced before the next request
                 [rb] = await _refs(ws, b)
-                # edit_ref on a link ignores a label: it follows the linked task
+                # edit_ref on a task reference ignores a label: it follows the related task
                 await _txn(ws, "edit_ref", {"ref_id": rb["ref_id"], "label": "Mine", "relation": "relates to",
                                             "updated_at": NOW}, "tt5")
                 await asyncio.sleep(0.2)
                 [rb] = await _refs(ws, b)
         assert rb["label"] == "New title"
 
-    async def test_edit_ref_changes_a_links_relation_on_both_sides(self, server):
+    async def test_edit_ref_changes_a_task_references_relation_on_both_sides(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Rel A", "tr1")
@@ -1068,7 +1069,7 @@ class TestTaskLinks:
         assert ra["updated_at"] == rb["updated_at"] == NOW
         assert "relation" in r["message"]
 
-    async def test_deleting_either_task_removes_the_link(self, server):
+    async def test_deleting_either_task_removes_the_task_reference(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Goes away", "td1")
@@ -1304,7 +1305,7 @@ class TestAssignees:
         assert "Fresh Owner" in after, "a name the split actually introduces does join"
 
     async def test_a_rename_changes_the_list_and_no_task(self, server):
-        """Unlike a relation, whose wording a link is looked up by, a name
+        """Unlike a relation, whose wording a task reference is looked up by, a name
         is only ever displayed — so a rename leaves every task alone."""
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
@@ -1423,7 +1424,7 @@ class TestRelations:
                 rows = {r["forward"] for r in await self._relations(ws)}
         assert not ({"twinned with", "depends on"} & rows)
 
-    async def test_rename_rewrites_links_and_delete_is_refused_in_use(self, server):
+    async def test_rename_rewrites_task_references_and_delete_is_refused_in_use(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 await _txn(ws, "add_relation", {"forward": "waits for", "backward": "awaited by"}, "rr1")
@@ -1436,7 +1437,7 @@ class TestRelations:
                 await _add_ref(ws, c, "rr6", kind="task", relation="awaited by", href=a)
                 await asyncio.sleep(0.2)
                 r = await _txn(ws, "delete_relation", {"relation_id": rel["relation_id"]}, "rr7", expect="error")
-                assert "2 links use it" in r["message"]
+                assert "2 task references use it" in r["message"]
                 await _txn(ws, "edit_relation", {"relation_id": rel["relation_id"], "forward": "pends on",
                                                  "backward": "pended by", "notes": "", "updated_at": NOW}, "rr8")
                 await asyncio.sleep(0.2)
@@ -1462,8 +1463,8 @@ class TestRelations:
                 await asyncio.sleep(0.2)
                 assert "pends with" not in {r["forward"] for r in await self._relations(ws)}
 
-    async def test_swapping_a_relations_two_wordings_flips_its_links(self, server):
-        """forward and backward trade places: every link must end up on the
+    async def test_swapping_a_relations_two_wordings_flips_its_task_references(self, server):
+        """forward and backward trade places: every task reference must end up on the
         other side, not back where it started. The rewrite reads the ref_ids
         of both wordings before it writes either, so the two passes cannot
         chase each other."""
@@ -1484,9 +1485,9 @@ class TestRelations:
         assert ra["relation"] == "fed by", "the row that said 'feeds' now says 'fed by'"
         assert rb["relation"] == "feeds"
 
-    async def test_a_symmetric_link_cannot_be_added_from_the_other_side(self, server):
-        """Both halves of a symmetric link carry the same wording, so adding it
-        the other way round is the mirror row, not a second link."""
+    async def test_a_symmetric_task_reference_cannot_be_added_from_the_other_side(self, server):
+        """Both halves of a symmetric task reference carry the same wording, so adding it
+        the other way round is the mirror row, not a second task reference."""
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Sym A", "ry1")
@@ -1498,7 +1499,7 @@ class TestRelations:
                 await asyncio.sleep(0.2)
                 assert len(await _refs(ws, a)) == 1 and len(await _refs(ws, b)) == 1
 
-    async def test_link_needs_a_known_wording(self, server):
+    async def test_a_task_reference_needs_a_known_wording(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Word A", "rw1")
@@ -1788,7 +1789,7 @@ class TestVersions:
                 assert rows["Cascade child"]["status"] == "open", "the child was left behind"
                 assert await _version(ws, child) == (1, 2)
 
-    async def test_undo_steps_both_halves_of_a_link(self, server):
+    async def test_undo_steps_both_halves_of_a_task_reference(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Link left", "l1")
@@ -1857,9 +1858,9 @@ class TestVersions:
                 assert "changed since" in resp["message"]
                 assert len(await _refs(ws, a)) == 1, "the near half was stepped anyway"
 
-    async def test_undoing_a_title_restores_the_labels_of_links_to_it(self, server):
+    async def test_undoing_a_title_restores_the_labels_of_task_references_to_it(self, server):
         """The hook's reason for existing: a cursor move is not `edit`, so
-        nothing else refreshes a link that shows the title it moved off."""
+        nothing else refreshes a task reference that shows the title it moved off."""
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Labelled left", "h1")
@@ -2011,9 +2012,9 @@ class TestDeleteIsPermanent:
                 assert await _chain(ws, "ref_version_chain", {"ref_id": ref_id}) == []
                 assert not (files / name).exists(), "an undone reference kept the file alive"
 
-    async def test_delete_takes_an_undone_link_from_a_surviving_task(self, server):
+    async def test_delete_takes_an_undone_task_reference_from_a_surviving_task(self, server):
         """The half owned by the task that survives is a chain under *its*
-        key, so the sweep has to reach it by where the link pointed."""
+        key, so the sweep has to reach it by where the task reference pointed."""
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Survivor", "ul1")
@@ -2086,7 +2087,7 @@ class TestLastEvent:
                 t = await _add(ws, "Collector", "lr1")
                 await _add_ref(ws, t, "lr2", kind="url", href="https://example.com", label="Example")
                 await asyncio.sleep(0.3)
-                assert await self._last(ws, t) == "Added a URL: Example"
+                assert await self._last(ws, t) == "Added a link: Example"
                 await _add_ref(ws, t, "lr3", kind="file", href="/files/abc.png",
                                mime="image/png", label="shot.png")
                 await asyncio.sleep(0.3)
@@ -2095,7 +2096,7 @@ class TestLastEvent:
                 await asyncio.sleep(0.3)
                 assert await self._last(ws, t) == "Added a snippet: a pasted note"
 
-    async def test_a_link_describes_both_tasks(self, server):
+    async def test_a_task_reference_describes_both_tasks(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
                 a = await _add(ws, "Link A", "ll1")
@@ -2103,8 +2104,8 @@ class TestLastEvent:
                 forward = WORDINGS[0]
                 await _add_ref(ws, a, "ll3", kind="task", href=b, relation=forward)
                 await asyncio.sleep(0.3)
-                assert await self._last(ws, a) == f"Linked: {forward} {b}"
-                assert (await self._last(ws, b)).startswith("Linked: ")
+                assert await self._last(ws, a) == f"Related: {forward} {b}"
+                assert (await self._last(ws, b)).startswith("Related: ")
                 assert a in await self._last(ws, b)
 
     async def test_a_reference_makes_a_version_of_its_task(self, server):
@@ -2118,7 +2119,7 @@ class TestLastEvent:
                 await asyncio.sleep(0.3)
                 assert await _version(ws, t) == (2, 2), "the reference did not make a version"
                 chain = await _chain(ws, "task_version_chain", {"task_id": t})
-                assert [r["last_event"] for r in chain] == ["Created", "Added a URL: Site"]
+                assert [r["last_event"] for r in chain] == ["Created", "Added a link: Site"]
 
                 ref_id = (await _refs(ws, t))[0]["ref_id"]
                 await _txn(ws, "delete_ref", {"ref_id": ref_id}, "lv3")
@@ -2232,8 +2233,8 @@ class TestStepGuards:
                 state = (await _request(ws, "ref_version_state", {"ref_id": ref_id}))[0]
                 assert (state["current"], state["top"]) == (None, 1), "redo would not be offered"
 
-    async def test_a_link_is_recorded_on_both_tasks(self, server):
-        """A link is two rows and two events: the task on the far side of one
+    async def test_a_task_reference_is_recorded_on_both_tasks(self, server):
+        """A task reference is two rows and two events: the task on the far side of one
         has had something happen to it as much as the near side."""
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
@@ -2244,8 +2245,8 @@ class TestStepGuards:
                 assert await _actions(ws, a) == ["created", "ref_added"]
                 assert await _actions(ws, b) == ["created", "ref_added"]
 
-    async def test_a_survivor_records_the_link_a_delete_took(self, server):
-        """Deleting a task removes the links pointing into it. The task that
+    async def test_a_survivor_records_the_task_reference_a_delete_took(self, server):
+        """Deleting a task removes the task references pointing into it. The task that
         survives lost a reference, and says so — its own events are not the
         deleted task's, so they stay."""
         async with aiohttp.ClientSession() as s:

@@ -28,11 +28,11 @@ versioned = true
 # One row per reference: something a task points at. kind is "url" (href =
 # the URL, including mailto: and mail-client deep links), "text" (body = a
 # pasted snippet), "file" (href = "/files/<sha256>.<ext>" under the files
-# directory, mime = its content type), or "task" (href = the linked task's
+# directory, mime = its content type), or "task" (href = the related task's
 # Task ID, relation = a wording from the relations table, label = that
-# task's title, kept fresh by TaskTransactions). A task link is stored as
+# task's title, kept fresh by TaskTransactions). A task reference is stored as
 # two mirrored rows, one per side with the pair's two wordings, so a pane
-# filtered on task_id shows every link of a task in either direction. label
+# filtered on task_id shows every task reference of a task in either direction. label
 # is what the UI shows.
 # versioned, like tasks: task_refs__history holds every version of every
 # reference, and undo/redo step one along its own chain.
@@ -40,12 +40,12 @@ versioned = true
 columns = { ref_id = "INTEGER PRIMARY KEY AUTOINCREMENT", task_id = "TEXT NOT NULL", kind = "TEXT NOT NULL DEFAULT 'url'", relation = "TEXT NOT NULL DEFAULT ''", label = "TEXT NOT NULL DEFAULT ''", href = "TEXT NOT NULL DEFAULT ''", body = "TEXT NOT NULL DEFAULT ''", mime = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
 versioned = true
 
-# The relations two linked tasks can have, one row per pair: forward is the
+# The relations two related tasks can have, one row per pair: forward is the
 # wording from this task to that one ("blocks"), backward the wording back
 # ("blocked by"), equal to forward for a symmetric relation ("relates to").
 # Every wording is unique across both columns (TaskTransactions enforces it,
 # case-insensitively). task_refs.relation stores the wording itself, so a
-# rename rewrites the links. Seeded from relations.json (beside this file)
+# rename rewrites the task references. Seeded from relations.json (beside this file)
 # when the table is first created; the user may edit or delete the seeds.
 [tables.relations]
 columns = { relation_id = "INTEGER PRIMARY KEY AUTOINCREMENT", forward = "TEXT NOT NULL", backward = "TEXT NOT NULL DEFAULT ''", notes = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
@@ -93,16 +93,16 @@ columns = { id = "INTEGER PRIMARY KEY AUTOINCREMENT", app = "TEXT NOT NULL DEFAU
 # task_id is rejected), and `complete`, `reopen`, and `delete` cascade over
 # the subtree (complete, delete) or the ancestors (reopen). The `*_ref` ops
 # manage task_refs: `add_ref` of kind "task" writes the row and its mirror,
-# `delete_ref` removes both, `edit_ref` on a link changes the relation on
-# both, `edit` refreshes the label on every row that links to the edited
+# `delete_ref` removes both, `edit_ref` on a task reference changes the relation on
+# both, `edit` refreshes the label on every row that points at the edited
 # task (`relabel_ref`), and a task delete takes the subtree's references
 # with it. The `*_relation` ops manage the relations table: a rename
-# rewrites the wording on every link (`reword_ref`); a delete is refused
-# while links use the relation. The `*_assignee` ops manage the assignees
+# rewrites the wording on every task reference (`reword_ref`); a delete is refused
+# while task references use the relation. The `*_assignee` ops manage the assignees
 # table, the Assigned To dropdown: neither a rename nor a delete touches a
 # task, so a task keeps the name it was given whatever becomes of the
 # list. `move` re-parents one task (its subtree
-# comes along): it refuses a cycle and a move that would put a task link
+# comes along): it refuses a cycle and a move that would put a task reference
 # inside one tree, and reopens complete new ancestors.
 [services.tasks]
 protocol = "mktask.services.TaskTransactions"
@@ -174,7 +174,7 @@ delete_assignee = [
 ]
 # One narrative row. Always filled in by TaskTransactions, never bound with
 # `bind`: a bind's "$N.field" is an absolute position in the request's op
-# list, and _steps repeats an op set once per row for a cascade or a link's
+# list, and _steps repeats an op set once per row for a cascade or a task reference's
 # mirror, so a bound event would name the first row's write for every row.
 add_event = [
     { table = "task_events", op_type = "insert", fields = ["task_id", "action", "detail", "ref_id", "actor"], defaults = { detail = "", ref_id = 0, actor = "" } },
@@ -182,7 +182,7 @@ add_event = [
 # Deleting a task takes its narrative with it: nothing can reach those rows
 # once the task is gone, and the delete is meant to leave nothing behind.
 # A reference change is a change to the task that owns it, so it makes a
-# version of that task too — which is what puts "attached a file" or "linked
+# version of that task too — which is what puts "attached a file" or "related
 # to TKMA00000002" in the task's own recorded history. Only for the ops that
 # do not already write the task row: a second update in one transaction
 # would record a second version of it.
@@ -334,14 +334,14 @@ SELECT value, label FROM (
 ORDER BY ord, label
 """
 
-# The Link dialog's task picker: open tasks outside the given task's tree.
+# The Reference Task dialog's task picker: open tasks outside the given task's tree.
 # Splitting already relates a task to its ancestors, descendants, and every
-# descendant of an ancestor, so none of those may be linked (TaskTransactions
-# rejects such a link anyway). `up` climbs to the root, `tree` is the root's
+# descendant of an ancestor, so none of those may be related (TaskTransactions
+# rejects such a task reference anyway). `up` climbs to the root, `tree` is the root's
 # whole subtree.
 [services.task_options]
 protocol = "reqrep"
-description = "Open tasks a given task may be linked to (outside its tree), as value/label pairs for a dialog select"
+description = "Open tasks a given task may be related to (outside its tree), as value/label pairs for a dialog select"
 sql = """
 WITH RECURSIVE up(task_id, parent_task_id) AS (
     SELECT task_id, parent_task_id FROM tasks WHERE task_id = :task_id
@@ -357,7 +357,7 @@ WHERE status = 'open' AND task_id != :task_id AND task_id NOT IN (SELECT task_id
 ORDER BY task_id
 """
 
-# The Task picker of the References pane's URL / Text / Link dialogs: every
+# The Task picker of the References pane's Link / Text / Reference Task dialogs: every
 # task, open ones first, so a reference can be added to any task from a pane
 # that shows no task of its own. The dialog defaults it to the task selected
 # in the Tasks pane (`state.selected_task`); with nothing selected the picker

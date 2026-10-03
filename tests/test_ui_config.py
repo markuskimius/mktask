@@ -340,8 +340,8 @@ def test_detail_toolbar_borrows_the_pane_dialogs(app_config):
     widget = next(w for w in app_config["panes"]["task-detail"]["widgets"]
                   if w["type"] == "task-refs")
     dialogs = widget["dialogs"]
-    assert set(dialogs) == {"addUrl", "addText", "addLink", "editTask", "editRef", "deleteRef"}
-    expected = {"addUrl": "add_ref", "addText": "add_ref", "addLink": "add_ref",
+    assert set(dialogs) == {"addLink", "addText", "referenceTask", "editTask", "editRef", "deleteRef"}
+    expected = {"addLink": "add_ref", "addText": "add_ref", "referenceTask": "add_ref",
                 "editTask": "edit", "editRef": "edit_ref", "deleteRef": "delete_ref"}
     for name, src in dialogs.items():
         pane = app_config["panes"][src["pane"]]
@@ -524,7 +524,7 @@ def test_custom_widgets_are_registered(app_config):
 
 def test_task_refs_widget_state_and_services(app_config, server_config):
     """refs.js reads the two published selections, calls only declared ops,
-    and opens a linked task by selecting it in the Tasks pane."""
+    and opens a related task by selecting it in the Tasks pane."""
     js = (STATIC / "refs.js").read_text(encoding="utf-8")
     for root in ("selected_task", "selected_ref"):
         assert root in app_config["state"], root
@@ -584,13 +584,13 @@ def test_the_toolbar_acts_on_the_pane_cursor(app_config):
     js = (STATIC / "refs.js").read_text(encoding="utf-8")
     assert '"mkui-table-toolbar task-refs-toolbar"' in js, "mkui's own toolbar classes"
     assert '"mkui-btn mkui-toolbar-btn"' in js, "mkui's own button classes"
-    for label in ('toolbarBtn("Add URL"', 'toolbarBtn("Add Text"', 'toolbarBtn("Add Link"',
+    for label in ('toolbarBtn("Add Link"', 'toolbarBtn("Add Text"', 'toolbarBtn("Reference Task"',
                   'toolbarBtn("Edit"', 'toolbarBtn("History"', 'toolbarBtn("Delete"'):
         assert label in js, f"the toolbar has no {label}"
-    for name in ("addUrl", "addText", "addLink"):
+    for name in ("addLink", "addText", "referenceTask"):
         assert f'addBorrowed("{name}")' in js, f"{name} is not on the toolbar"
     order = [m for m in re.findall(r'toolbarBtn\("([^"]+)"', js)]
-    assert order == ["Edit", "Add URL", "Add Text", "Add Link", "History", "Delete"], order
+    assert order == ["Edit", "Add Link", "Add Text", "Reference Task", "History", "Delete"], order
     assert "openBorrowed(name, task ?? {})" in js, "the add dialogs open with or without a task"
     assert 'openBorrowed("editRef", ref)' in js and 'openBorrowed("editTask", task)' in js,         "Edit opens the dialog the cursor calls for"
     assert 'openBorrowed("deleteRef", ref)' in js
@@ -603,7 +603,7 @@ def test_the_toolbar_acts_on_the_pane_cursor(app_config):
 
 def test_snippets_come_before_the_files():
     """Section order: what was written down about a task reads before what was
-    filed with it. Task links are not in SECTIONS — they group by relation
+    filed with it. Task references are not in SECTIONS — they group by relation
     above these — and `image` is a presentation of `file`, not a fifth kind."""
     from mktask.services import REF_KINDS
 
@@ -633,7 +633,7 @@ def test_images_preview_as_a_grid_of_thumbnails(server_config):
         assert cls in js, f"class {cls} is not used"
 
 
-def test_go_to_selects_the_linked_task(app_config):
+def test_go_to_selects_the_related_task(app_config):
     """mkui >= 0.2.23: `table.select` on the Tasks pane publishes the row as a
     click does, so the Detail and References panes follow. No viewer pane."""
     import mkui
@@ -807,6 +807,26 @@ def test_the_word_done_is_gone(app_config, server_config):
     assert not re.search(r"\bdone\b", text, re.IGNORECASE)
 
 
+def test_a_link_is_a_url_reference(app_config):
+    """"Link" means only a URL reference; one task referring to another is a
+    task reference to a related task, never a "task link" or a "linked task"."""
+    text = json.dumps(app_config)
+    assert not re.search(r"task link|linked|unlink", text, re.IGNORECASE)
+    refs = app_config["panes"]["references"]
+    assert refs["display"]["kind"] == "${IF(kind == 'url', 'link', kind)}", "the stored kind stays url"
+    add = _reference_dialogs(app_config)
+    assert add["url"]["title"].startswith("Add link${") and add["task"]["title"].startswith("Reference a task${")
+    assert _fields(add["url"])["_url"]["label"] == "URL", "a link has a URL: the field keeps the word"
+    edit = next(b for b in refs["buttons"] if b["label"] == "Edit")["action"]["dialog"]
+    assert edit["title"] == "Edit ${IF(row.kind == 'url', 'link', row.kind)} reference"
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
+    assert '["url", "Links"]' in js and "URLs" not in js, "the Detail pane's section is Links"
+    assert not re.search(r"task link|linked task|\bAdd URL\b", js, re.IGNORECASE)
+    from mktask.services import event_phrase
+    assert event_phrase("ref_added", "x", "url") == "Added a link: x"
+    assert event_phrase("ref_added", "blocks T", "task") == "Related: blocks T"
+
+
 def test_timestamps_are_stamped_client_side(app_config):
     text = json.dumps(app_config["panes"])
     stamp = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
@@ -862,23 +882,23 @@ def _fields(dialog):
 
 
 def _reference_dialogs(app_config):
-    """The References pane's URL / Text / Link buttons, by kind."""
+    """The References pane's Link / Text / Reference Task buttons, by kind."""
     refs = app_config["panes"]["references"]
     by_label = {b["label"]: b for b in refs["buttons"]}
     return {kind: by_label[label]["action"]["dialog"]
-            for kind, label in (("url", "Add URL"), ("text", "Add Text"), ("task", "Add Link"))}
+            for kind, label in (("url", "Add Link"), ("text", "Add Text"), ("task", "Reference Task"))}
 
 
 def test_one_reference_dialog_per_kind_on_the_references_pane(app_config, server_config):
-    """A button per kind — Add URL, Add Text, Add Link — on the References pane, where
+    """A button per kind — Add Link, Add Text, Reference Task — on the References pane, where
     references are shown, with no kind dropdown. Each dialog's first field is
     the Task picker, and the Tasks pane no longer carries a Reference button:
     adding a reference lives with the references."""
     from mktask.services import REF_KINDS
     tasks = app_config["panes"]["tasks"]
-    assert not [b for b in tasks["buttons"] if b["label"] in ("Reference", "Link", "URL", "Text", "Add URL", "Add Text", "Add Link")]
+    assert not [b for b in tasks["buttons"] if b["label"] in ("Reference", "Link", "URL", "Text", "Add Link", "Add Text", "Reference Task")]
     refs = app_config["panes"]["references"]
-    assert [b["label"] for b in refs["buttons"]] == ["Add URL", "Add Text", "Add Link", "Edit", "History", "Delete"], \
+    assert [b["label"] for b in refs["buttons"]] == ["Add Link", "Add Text", "Reference Task", "Edit", "History", "Delete"], \
         "the add buttons lead the toolbar"
     dialogs = _reference_dialogs(app_config)
     assert set(dialogs) < set(REF_KINDS), "file goes through the drop box"
@@ -897,7 +917,7 @@ def test_one_reference_dialog_per_kind_on_the_references_pane(app_config, server
     assert "compute" in f["label"], "a live suggestion from the first line"
     f = _fields(dialogs["task"])
     assert f["href"] == {"name": "href", "type": "hidden", "compute": "_task"}
-    assert "label" not in f, "the server labels a link by the linked task's title"
+    assert "label" not in f, "the server labels a task reference by the related task's title"
     for name, params in (("relation", None), ("_task", {"task_id": "${field.task_id}"})):
         src = f[name]["optionsFrom"]
         svc = server_config["services"][src["service"]]
@@ -979,16 +999,16 @@ def test_references_pane_shows_the_stored_wording(references_pane):
 def test_one_edit_dialog_for_every_kind(app_config):
     pane = app_config["panes"]["references"]
     edit = next(b for b in pane["buttons"] if b["label"] == "Edit")
-    assert edit["enable"] == {"connected": True}, "task links are editable too (their relation)"
+    assert edit["enable"] == {"connected": True}, "task references are editable too (their relation)"
     dialog = edit["action"]["dialog"]
     assert _hidden(dialog, "ref_id") == "${row.ref_id}"
     f = _fields(dialog)
     assert f["relation"]["showWhen"] == "row.kind == 'task'" and f["relation"]["value"] == "${row.relation}"
     assert f["relation"]["optionsFrom"]["service"] == "relation_options"
-    assert f["label"]["showWhen"] == "row.kind != 'task'", "a link's label follows the linked task"
+    assert f["label"]["showWhen"] == "row.kind != 'task'", "a task reference's label follows the related task"
     assert f["href"]["showWhen"] == "row.kind == 'url'"
     assert f["body"]["showWhen"] == "row.kind == 'text'"
-    linked = next(x for x in _walk(dialog["fields"]) if x.get("label") == "Linked task")
+    linked = next(x for x in _walk(dialog["fields"]) if x.get("label") == "Related task")
     assert linked["type"] == "readonly" and linked["showWhen"] == "row.kind == 'task'" and "name" not in linked
     delete = _dialog_by_op(app_config, "references", "delete_ref")
     assert _hidden(delete, "ref_id") == "${row.ref_id}"

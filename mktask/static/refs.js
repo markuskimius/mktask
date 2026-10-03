@@ -1,11 +1,11 @@
 // The `task-refs` widget: the whole Detail body — everything mkui's
 // declarative pieces cannot do. A toolbar, the selected task's own fields,
 // a drop box that accepts a pasted or dropped file, and the references of
-// the selected task **and of every task split from it**: task links grouped
-// by relation, then snippets, images, files, and URLs.
+// the selected task **and of every task split from it**: task references grouped
+// by relation, then snippets, images, files, and links.
 //
 // The pane has one cursor, over the task block or over a reference, and a
-// toolbar above it. `Add URL`, `Add Text` and `Add Link` add a reference of that kind:
+// toolbar above it. `Add Link`, `Add Text` and `Reference Task` add a reference of that kind:
 // they open the References pane's own dialogs, whose Task picker defaults to
 // `state.selected_task` and asks when there is none, so they work with no
 // task selected at all. `Edit` opens the dialog that matches the cursor —
@@ -36,12 +36,12 @@
 //
 // A line's body — an image, a snippet, a URL — opens on click, one at a time.
 //
-// "Go to" on a task link selects the linked task in the Tasks pane
+// "Go to" on a task reference selects the related task in the Tasks pane
 // (`table.select`, mkui ≥ 0.2.23). Selecting it there is the whole job:
 // mkui publishes the row exactly as a click does, so the Detail pane and
 // the References pane's link filter follow on their own. A key the pane's
 // filters hide comes back `hidden` rather than selected — the default
-// filter shows open tasks only, so a complete linked task lands there —
+// filter shows open tasks only, so a complete related task lands there —
 // and `reveal` (config) then clears the status filter and tries again.
 
 import { registerWidget, ensureMkio } from "/mkui/src/index.js";
@@ -51,11 +51,11 @@ const REFS_SERVICE = "task_refs";
 const TASKS_SERVICE = "all_tasks";
 const TASKS_SUBID = "task-refs-tasks";
 
-// The sections below the task links, in the order they are shown: the
+// The sections below the task references, in the order they are shown: the
 // snippets first, since what was written down about a task reads before what
 // was filed with it. Images are files, but they are shown as a grid of
 // thumbnails: a picture is its own label, and a wall of file names is not.
-const SECTIONS = [["text", "Snippets"], ["image", "Images"], ["file", "Files"], ["url", "URLs"]];
+const SECTIONS = [["text", "Snippets"], ["image", "Images"], ["file", "Files"], ["url", "Links"]];
 const GRID_SECTIONS = new Set(["image"]);
 
 // The task's own fields, under the title, in the order the block shows them.
@@ -124,7 +124,7 @@ const hasBody = (ref) =>
   || isImage(ref);
 
 /**
- * A reference row rendered as one line: the linked task, or the label, plus
+ * A reference row rendered as one line: the related task, or the label, plus
  * the owner's Task ID when the reference belongs to a task split from the
  * selected one — a line must never leave the reader guessing whose it is.
  */
@@ -203,7 +203,7 @@ function renderRefBody(ref) {
 
 /**
  * The references as the sections the pane shows: one per relation wording
- * (task links, alphabetically), then Snippets, Images, Files, and URLs. Inside a
+ * (task references, alphabetically), then Snippets, Images, Files, and Links. Inside a
  * section the selected task's own come first, then each descendant's
  * together, oldest first — so a new reference lands at the end of its own
  * task's run.
@@ -217,7 +217,7 @@ function groupRefs(refs, ownerId) {
   const links = new Map();
   const bySection = new Map();
   for (const ref of rows) {
-    const [map, key] = ref.kind === "task" ? [links, ref.relation || "links to"] : [bySection, sectionOf(ref)];
+    const [map, key] = ref.kind === "task" ? [links, ref.relation || "relates to"] : [bySection, sectionOf(ref)];
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(ref);
   }
@@ -245,7 +245,7 @@ registerWidget("task-refs", (spec, app, host) => {
     let result = select(taskId);
     let revealed = false;
     if (result?.hidden?.length && spec.reveal) {
-      // Opt-in: drop the status filter (the usual reason a linked task is
+      // Opt-in: drop the status filter (the usual reason a related task is
       // out of view) and try once more. Other filters are left alone.
       app.fireAction("table.filter", { pane: tasksPane, filters: { status: null }, merge: true });
       result = select(taskId);
@@ -402,9 +402,9 @@ registerWidget("task-refs", (spec, app, host) => {
   // passes. Nothing here gates them: the dialog asks for the task instead.
   const addBorrowed = (name) => guarded(() => openBorrowed(name, task ?? {}));
   const editBtn = toolbarBtn("Edit", editCursor);
-  toolbarBtn("Add URL", addBorrowed("addUrl"));
-  toolbarBtn("Add Text", addBorrowed("addText"));
   toolbarBtn("Add Link", addBorrowed("addLink"));
+  toolbarBtn("Add Text", addBorrowed("addText"));
+  toolbarBtn("Reference Task", addBorrowed("referenceTask"));
   const historyBtn = toolbarBtn("History", historyCursor);
   const deleteBtn = toolbarBtn("Delete", deleteCursor);
 
@@ -689,7 +689,7 @@ registerWidget("task-refs", (spec, app, host) => {
     task = next ?? null;
     box.classList.toggle("task-refs-dropbox-disabled", !task);
     boxText.textContent = task
-      ? `Drop, paste, or click to add a file, URL, or snippet to ${task.task_id}`
+      ? `Drop, paste, or click to add a file, link, or snippet to ${task.task_id}`
       : "Select a task to add references";
     if (changed) {
       setStatus("");

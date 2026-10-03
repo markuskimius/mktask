@@ -10,21 +10,21 @@ writes and adds what a config cannot express:
   `counters` table at startup and written back in the same transaction as
   the insert, so a crash can neither reuse nor skip a number.
 - `move` re-parents one task, its subtree coming along: it refuses a cycle
-  and a move that would leave a task link inside one tree, and reopens the
+  and a move that would leave a task reference inside one tree, and reopens the
   new ancestors when open work lands under a complete parent.
 - `complete` and `delete` apply to the whole subtree under the given task,
   and `reopen` to the task and every ancestor, so the open-only view never
   shows a child without its parent. A delete also removes every reference
-  the subtree owns or is linked to, and unlinks files nothing refers to any
+  the subtree owns or is referenced by, and unlinks files nothing refers to any
   more. Updates go through the writer in one transaction; deletes go one
   request per row, because the writer announces a delete with the request's
   data, and one request for many rows would announce the same key for all.
 - References (`task_refs`): `add_ref` checks the owning task exists, fills
   a missing label, and for kind "task" writes the row and its mirror on the
   other task with the inverse relation. `delete_ref` removes both halves of
-  a link. `edit_ref` refuses a task link (its label follows the linked
-  task) and keeps a file's href. `edit` on a task relabels every link that
-  points at it.
+  a task reference. `edit_ref` refuses a task reference (its label follows
+  the related task) and keeps a file's href. `edit` on a task relabels
+  every task reference that points at it.
 - The Assigned To dropdown is a list of its own (`assignees`), managed by
   `add_assignee` / `edit_assignee` / `delete_assignee` — and grown by
   `add`, `split` and `edit`, which add a name typed into the picker that
@@ -40,10 +40,10 @@ chain. That leaves two things to an application:
 - `undo_action` / `redo_action` step *every row one user action wrote*, not
   just the one the user has selected. mkio stamps each row it writes with
   the transaction's `_mkio_ref`, so the group is a lookup, not bookkeeping:
-  a link's two mirrored rows, a subtree completion and a move with its
+  a task reference's two mirrored rows, a subtree completion and a move with its
   reopened ancestors all step together, under three guards.
 - `undo_redo_hook` is what mkio's `on_undo_redo` calls after a cursor
-  moves. It writes the `undone` / `redone` event and re-labels any link
+  moves. It writes the `undone` / `redone` event and re-labels any task reference
   left pointing at a stale title, which a cursor move would otherwise
   bypass — `_op_edit` is not on that path.
 
@@ -110,10 +110,10 @@ TOP_LEVEL_DETAIL = "top level"
 
 #: What adding a reference is called, by kind. The point of `last_event` is
 #: to read as a sentence in the blotter, so a file is "attached" and a task
-#: is "linked" rather than both being "a reference added".
+#: is "related" rather than both being "a reference added".
 _REF_ADDED = {
-    "file": "Attached a file", "url": "Added a URL",
-    "text": "Added a snippet", "task": "Linked",
+    "file": "Attached a file", "url": "Added a link",
+    "text": "Added a snippet", "task": "Related",
 }
 
 
@@ -275,7 +275,7 @@ class TaskTransactions(TransactionService):
         fields — a second update in the same transaction would record a
         second version of the task. `wrote` names those, so what is left is
         the tasks a reference change concerns: the owner, and both ends of a
-        link. Touching them is what puts a reference event in the task's
+        task reference. Touching them is what puts a reference event in the task's
         recorded history. One touch per task, the last event winning.
         """
         pending = {e["task_id"]: e for e in events if e["task_id"] not in wrote}
@@ -424,7 +424,7 @@ class TaskTransactions(TransactionService):
         )
         gone = set(keys)
         if refs:
-            # A link removed from a task that survives is a change to that
+            # A task reference removed from a task that survives is a change to that
             # task; one removed from a task being deleted is not worth saying.
             await self._submit_each(
                 "delete_ref", [{"ref_id": r["ref_id"]} for r in refs], ref,
@@ -444,7 +444,7 @@ class TaskTransactions(TransactionService):
         return result
 
     async def _op_edit(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
-        """A plain update, plus a relabel of every link that points at this task."""
+        """A plain update, plus a relabel of every task reference that points at this task."""
         was = await self._task(data["task_id"])
         data, a_ops, a_params = await self._assignee_steps(
             data, previous=(was or {}).get("assigned_to", "")
@@ -466,7 +466,7 @@ class TaskTransactions(TransactionService):
         )
 
     async def _relabel_steps(self, task_id: str, title: str) -> tuple[tuple, tuple]:
-        """Steps setting every link that points at `task_id` to its new title.
+        """Steps setting every task reference that points at `task_id` to its new title.
 
         Only the rows that disagree: a relabel is an ordinary write on a
         versioned table, so a no-op one would still spend a version and
@@ -530,13 +530,13 @@ class TaskTransactions(TransactionService):
         )
 
     async def _check_no_links_merge(self, moved: list[str], parent: str) -> None:
-        """Refuse a move that would leave a task link inside one tree.
+        """Refuse a move that would leave a task reference inside one tree.
 
-        `add_ref` forbids linking two tasks of the same tree, because
+        `add_ref` forbids relating two tasks of the same tree, because
         splitting already relates them. A move joins the moved subtree to
-        the new parent's tree, so a link across that seam would become one
-        of those — silently. Refusing says which links are in the way; the
-        user unlinks them and moves again.
+        the new parent's tree, so a task reference across that seam would become one
+        of those — silently. Refusing says which references are in the way; the
+        user removes them and moves again.
         """
         root = (await self._ancestors_and_self(parent, status=None))[-1]
         dest = await self._subtree(root, status=None)
@@ -552,7 +552,7 @@ class TaskTransactions(TransactionService):
         n, r = len(rows), rows[0]
         s = "s" if n != 1 else ""
         raise ValueError(
-            f"Cannot move: {r['task_id']} {r['relation']} {r['href']} ({n} link{s}). Unlink first."
+            f"Cannot move: {r['task_id']} {r['relation']} {r['href']} ({n} reference{s}). Remove first."
         )
 
     # ── Undo and redo, by user action ─────────────────────────────────
@@ -579,7 +579,7 @@ class TaskTransactions(TransactionService):
         """Step every row one user action wrote, not just the one selected.
 
         mkio's undo moves one row's cursor, but a mktask action is rarely
-        one row: a link is two mirrored rows, completing a task completes
+        one row: a task reference is two mirrored rows, completing a task completes
         its subtree, a move reopens the ancestors it lands under. Undoing
         one row of those would leave the rest behind.
 
@@ -651,7 +651,7 @@ class TaskTransactions(TransactionService):
         Three ways it could: the data moved on since (someone edited a row
         the action wrote), the step would strand a child or a reference
         under a task it is about to remove, or it would restore a row whose
-        parent or linked task is no longer there.
+        parent or related task is no longer there.
         """
         for table, rows in group.items():
             key_col = _VERSIONED[table][0]
@@ -688,7 +688,7 @@ class TaskTransactions(TransactionService):
     async def _check_restorable(self, table: str, key: Any, version: int, row: dict[str, Any]) -> None:
         """The version being stepped onto must still make sense.
 
-        A task's parent and a link's other end can have been deleted since
+        A task's parent and a task reference's other end can have been deleted since
         the version was recorded, and a delete is permanent — so the step
         would restore a row pointing at nothing.
         """
@@ -707,7 +707,7 @@ class TaskTransactions(TransactionService):
         elif dest.get("kind") == "task":
             for end in (dest.get("task_id"), dest.get("href")):
                 if end and not await self._exists(end):
-                    raise ValueError(f"Cannot restore link: {end} no longer exists")
+                    raise ValueError(f"Cannot restore reference: {end} no longer exists")
 
     # ── What an undo left behind ──────────────────────────────────────
 
@@ -718,7 +718,7 @@ class TaskTransactions(TransactionService):
         the write it reverses. Two things followed here, and neither is on
         the path a cursor move takes:
 
-        - A link shows the title of the task it points at, refreshed by
+        - A task reference shows the title of the task it points at, refreshed by
           `_op_edit`. A step that changes a title leaves those stale.
         - The narrative. `undone` / `redone` belong in it as much as the
           write they reverse does.
@@ -741,7 +741,7 @@ class TaskTransactions(TransactionService):
         params: tuple = ()
         if title is not None and title != old.get("title"):
             # Idempotent, so running it after a group step that already
-            # carried the link rows along costs nothing.
+            # carried the task reference rows along costs nothing.
             ops, params = await self._relabel_steps(task_id, title)
         e_ops, e_params = self._event_steps([
             self._event(task_id, "undone" if event.cause == "undo" else "redone",
@@ -769,18 +769,18 @@ class TaskTransactions(TransactionService):
             if inverse is None:
                 raise ValueError(f"Unknown relation {relation!r}")
             if href == task_id:
-                raise ValueError("A task cannot be linked to itself")
+                raise ValueError("A task cannot be related to itself")
             other = await self._task(href)
             if other is None:
-                raise ValueError(f"Cannot link: no task {href!r}")
+                raise ValueError(f"Cannot relate: no task {href!r}")
             mine = await self._ancestors_and_self(task_id, status=None)
             theirs = await self._ancestors_and_self(href, status=None)
             if href in mine:
-                raise ValueError(f"Cannot link: {href} is an ancestor of {task_id} (it was split from it)")
+                raise ValueError(f"Cannot relate: {href} is an ancestor of {task_id} (it was split from it)")
             if task_id in theirs:
-                raise ValueError(f"Cannot link: {href} is a descendant of {task_id} (it was split from it)")
+                raise ValueError(f"Cannot relate: {href} is a descendant of {task_id} (it was split from it)")
             if mine[-1] == theirs[-1]:
-                raise ValueError(f"Cannot link: {task_id} and {href} are in the same tree (split from {mine[-1]})")
+                raise ValueError(f"Cannot relate: {task_id} and {href} are in the same tree (split from {mine[-1]})")
             dup = await self.db.read(
                 "SELECT 1 FROM task_refs WHERE task_id = ? AND kind = 'task' AND href = ? AND relation = ?",
                 (task_id, href, relation),
@@ -793,7 +793,7 @@ class TaskTransactions(TransactionService):
                 {**data, "task_id": href, "kind": kind, "relation": inverse,
                  "href": task_id, "label": task["title"], "body": "", "mime": ""},
             ]
-            # A link is a change to both tasks, so both say so. The events
+            # A task reference is a change to both tasks, so both say so. The events
             # name no ref_id: the row's is assigned by SQLite as it is
             # inserted, and nothing hands it back within the transaction.
             return await self._submit("add_ref", rows, data, ref, events=[
@@ -802,7 +802,7 @@ class TaskTransactions(TransactionService):
             ])
 
         if kind == "url" and not href:
-            raise ValueError("A URL reference needs a URL")
+            raise ValueError("A link needs a URL")
         if kind == "text" and not body.strip():
             raise ValueError("A text reference needs some text")
         if kind == "file" and not href.startswith(FILES_ROUTE):
@@ -818,8 +818,9 @@ class TaskTransactions(TransactionService):
         if row is None:
             raise ValueError(f"No reference {data['ref_id']!r}")
         if row["kind"] == "task":
-            # Only the relation is editable: the label follows the linked
-            # task and a new target is a new link. Both halves change together.
+            # Only the relation is editable: the label follows the related
+            # task and a new target is a new task reference. Both halves change
+            # together.
             relation = str(data.get("relation") or "").strip()
             inverse = await self._inverse(relation)
             if inverse is None:
@@ -842,7 +843,7 @@ class TaskTransactions(TransactionService):
         elif row["kind"] == "text":
             href = ""
         elif not href:
-            raise ValueError("A URL reference needs a URL")
+            raise ValueError("A link needs a URL")
         label = str(data.get("label") or "").strip() or default_label(row["kind"], href, body)
         return await self._submit(
             "edit_ref", [{**data, "href": href, "body": body, "label": label, "relation": ""}], data, ref,
@@ -893,7 +894,7 @@ class TaskTransactions(TransactionService):
         return await self._submit("add_relation", [await self._relation_data(data)], data, ref)
 
     async def _op_edit_relation(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
-        """Rename: every link carrying an old wording takes the new one, same transaction."""
+        """Rename: every task reference carrying an old wording takes the new one, same transaction."""
         old = await self._relation(data["relation_id"])
         if old is None:
             raise ValueError(f"No relation {data['relation_id']!r}")
@@ -922,10 +923,10 @@ class TaskTransactions(TransactionService):
             )
             n = int(used[0]["n"])
             if n:
-                links = n // 2  # a link is two rows, whatever the wordings
+                links = n // 2  # a task reference is two rows, whatever the wordings
                 raise ValueError(
-                    f"Cannot delete {row['forward']!r}: {links} link{'s' if links != 1 else ''} use it. "
-                    "Remove those links first, or rename the relation instead."
+                    f"Cannot delete {row['forward']!r}: {links} task reference{'s' if links != 1 else ''} use it. "
+                    "Remove those first, or rename the relation instead."
                 )
         return await self._submit_each("delete_relation", [{"relation_id": data["relation_id"]}], ref)
 
@@ -1022,7 +1023,7 @@ class TaskTransactions(TransactionService):
         return r["backward"] if r["forward"] == wording else r["forward"]
 
     async def _mirror(self, row: dict[str, Any]) -> dict[str, Any] | None:
-        """The other half of a task link: on the linked task, pointing back, with the inverse wording."""
+        """The other half of a task reference: on the related task, pointing back, with the inverse wording."""
         inverse = await self._inverse(row["relation"])
         if inverse is None:
             return None

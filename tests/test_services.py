@@ -50,7 +50,7 @@ def test_pattern_rejects_malformed_ids(bad):
     ("text", "", "\n  \nSubject: hi\nbody", "Subject: hi"),       # first non-blank line, stripped
     ("text", "", "x" * 100, "x" * 79 + "…"),                     # long lines are truncated
     ("text", "", "   ", ""),
-    ("task", "TKMA00000002", "", ""),                            # a link's label is the linked title, set by the service
+    ("task", "TKMA00000002", "", ""),                            # a task reference's label is the related task's title, set by the service
 ])
 def test_default_label(kind, href, body, expected):
     assert default_label(kind, href, body) == expected
@@ -82,9 +82,9 @@ def test_reference_kinds():
     (("completed",), "Completed"),
     (("reopened",), "Reopened"),
     (("ref_added", "shot.png", "file"), "Attached a file: shot.png"),
-    (("ref_added", "Example", "url"), "Added a URL: Example"),
+    (("ref_added", "Example", "url"), "Added a link: Example"),
     (("ref_added", "a note", "text"), "Added a snippet: a note"),
-    (("ref_added", "blocks TKMA00000002", "task"), "Linked: blocks TKMA00000002"),
+    (("ref_added", "blocks TKMA00000002", "task"), "Related: blocks TKMA00000002"),
     (("ref_edited", "Example"), "Edited a reference: Example"),
     (("ref_deleted", "Example"), "Removed a reference: Example"),
 ])

@@ -28,8 +28,8 @@ that cannot be undone.
 **Move** re-files a task: pick a new parent, or *— Top level —* to make it a
 top-level task again. Everything split from it comes along. The picker offers
 every open task except the ones under the task being moved, and a move that
-would land a linked task in its own tree is refused, naming the links to
-remove first.
+would land a related task in its own tree is refused, naming the task
+references to remove first.
 
 A task can be **assigned to** someone. *Assigned To* is a dropdown: pick a
 name, pick *— New name —* and type one — a name typed there joins the list
@@ -52,10 +52,11 @@ starts at `00000001`, never repeats, and grows past eight digits rather than
 wrapping (`TKMA100000000` follows `TKMA99999999`).
 
 A task carries **references**: the things to refer back to while working on
-it. A reference is a URL (including `mailto:` and mail-client links), a
+it. A reference is a **link** (a URL, including `mailto:` and mail-client
+deep links), a
 pasted text snippet (an email, a chat exchange), a file (a screenshot, a
-PDF), or a **link to another task** with a **relation**. The References
-pane's **Add URL**, **Add Text**, and **Add Link** buttons add one each, and the Detail
+PDF), or **another task** with a **relation**. The References
+pane's **Add Link**, **Add Text**, and **Reference Task** buttons add one each, and the Detail
 pane has the same three. Each dialog opens on a **Task** picker already set
 to the task selected in the blotter — change it to file the reference on
 another task, or pick one when nothing is selected — with the label
@@ -63,20 +64,20 @@ suggested from the URL or the first line of the text; once added, the
 blotter selects the task it went to, so the new reference is on show
 whichever task that was. Files are added from the Detail pane instead:
 select a task and drop, paste, or pick a file there; an image pastes
-straight from the clipboard, a pasted URL becomes a URL reference, pasted
+straight from the clipboard, a pasted URL becomes a link, pasted
 text a snippet. The Detail pane opens with
 the task itself — its status, importance, urgency, score, due date, who it is
 assigned to, and notes — and lists every reference of the selected task the moment it is selected,
 **and every reference of the tasks split from it** — a section per relation ("Blocks",
-"Blocked by"), then the snippets, images, files, and URLs, each section
+"Blocked by"), then the snippets, images, files, and links, each section
 counted, and a reference a child owns tagged with its Task ID. **Images show
 as a grid of thumbnails**; clicking one opens it full size under the grid, and
-clicking a snippet or a URL opens it where it stands. The subtree comes from
+clicking a snippet or a link opens it where it stands. The subtree comes from
 the tasks themselves, not from what the blotter is showing, so a completed
 child's references stay with its ancestor.
 
-**The Detail pane edits what it shows.** It has its own toolbar — *Add URL*,
-*Add Text*, and *Add Link* are the References pane's add buttons — and one
+**The Detail pane edits what it shows.** It has its own toolbar — *Add Link*,
+*Add Text*, and *Reference Task* are the References pane's add buttons — and one
 cursor: click the task block or click a reference. *Edit* opens the dialog
 that matches — the same Edit dialog the blotter opens for a task, the same
 one the References pane opens for a reference — and *Delete* removes a
@@ -87,31 +88,31 @@ announces it.
 The References pane follows the
 selected tasks (mkui table linking; clear the selection to see every
 reference), each reference beside its task's Task ID and title (the title is
-joined in live: renaming the task updates the column), with URLs and files as
-links and a text snippet's body in the Text column; selecting one there opens and marks
+joined in live: renaming the task updates the column), with links and files
+clickable and a text snippet's body in the Text column; selecting one there opens and marks
 the same line in the Detail pane, and a reference the Detail pane does not
-list leaves it alone. A task link shows on both tasks, worded from each side,
-and *Go to* selects the linked task in the blotter, so the Detail and
-References panes follow it (a linked task the current filter hides is revealed
-first). Only tasks from different trees can be linked; tasks that share a root
+list leaves it alone. A task reference shows on both tasks, worded from each side,
+and *Go to* selects the related task in the blotter, so the Detail and
+References panes follow it (a related task the current filter hides is revealed
+first). Only tasks from different trees can reference each other; tasks that share a root
 are already related by splitting.
 
 **Relations are yours to define** under Configure › Relations: each is a pair
 of wordings, one from this task to that one ("blocks") and one back
 ("blocked by"), or a single wording that reads the same both ways ("relates
 to"). A new database starts with those two. Renaming a relation rewrites
-every link that uses it; a relation in use cannot be deleted. Uploaded
+every task reference that uses it; a relation in use cannot be deleted. Uploaded
 files live beside the database in `<db>.files/`, named by content hash;
 deleting the last reference to a file, or its task, removes the file.
 
 Each task also shows its **Last Event** — the most recent thing to have
 happened to it, in words: *Created*, *Split into Wire the pane*, *Attached a
-file: shot.png*, *Linked: blocks TKMA00000002*, *Moved under TKMA00000007*.
+file: shot.png*, *Related: blocks TKMA00000002*, *Moved under TKMA00000007*.
 
 **Every change is kept.** Tasks and references carry a **version** number,
 shown as a column, and every version of every row is recorded. Adding,
 editing or removing a reference makes a version of the task that owns it —
-both sides of a link — so a task's history covers its references as well as
+both sides of a task reference — so a task's history covers its references as well as
 its own fields, and each version says what it was about. *History* on
 the Tasks or References pane — or in the Detail pane, for whatever its
 cursor is on — opens that record: the versions as a table you can sort and
@@ -120,7 +121,7 @@ version last set each field.
 
 **Undo and Redo** step a record back and forth along those versions, from
 the same panes. They step *the whole action*, not one row: undoing a
-completion reopens the subtree it completed, undoing a link removes both
+completion reopens the subtree it completed, undoing a task reference removes both
 halves, undoing a move puts back the ancestors it reopened. A confirmation
 says what is about to change. Undoing the creation of a task removes it,
 and redo brings it back. Editing a task after undoing it discards what was
@@ -129,7 +130,7 @@ keyboard shortcut on purpose — this writes to data everyone on the server
 shares.
 
 Undo and redo are refused rather than half-applied when they would strand
-something: a task that has since been split, a parent or a linked task that
+something: a task that has since been split, a parent or a related task that
 has since been deleted, or a row another change has moved past.
 
 **Activity** (under the Tasks menu) is the other half: a plain list of what
@@ -194,9 +195,9 @@ frames, dialogs). Both are plain config — see the mkio and mkui READMEs for th
 formats. The one piece of code is `mktask/services.py`, which the `tasks`
 service points at: it assigns Task IDs, runs the complete, reopen, and
 delete cascades, re-parents a task on a move (refusing a cycle or a move
-that would swallow a task link), and manages references and relations (task links are
-written as a mirrored pair, labels follow the linked task's title, a
-renamed relation rewrites its links, orphaned files are removed).
+that would swallow a task reference), and manages references and relations (task references are
+written as a mirrored pair, labels follow the related task's title, a
+renamed relation rewrites its task references, orphaned files are removed).
 `static/refs.js` is the one custom widget and the whole Detail body: the
 toolbar, the task block, the drop box, the reference list of the selected
 task and its descendants (its own live queries), and *Go to*. Its Edit and
@@ -211,8 +212,8 @@ older database. 0.2.0 did (Task IDs, splitting, and `complete` replacing
 only adds the `task_refs` table, which `auto_migrate` creates in an existing
 database, so a 0.2.0 database carries over as is. 0.3.1 changes no schema.
 0.4.0 adds the `relations` table (created and seeded on first start) and
-stores a link's relation as its wording ("blocked by") rather than a key
-(`blocked_by`): links made before 0.4.0 must be removed and re-added. 0.5.0
+stores a task reference's relation as its wording ("blocked by") rather than a key
+(`blocked_by`): task references made before 0.4.0 must be removed and re-added. 0.5.0
 changes no schema — the Detail pane's new reference list reads the tables
 0.4.0 already had, and neither does 0.6.0: moving a task rewrites one
 existing column. 0.7.0 changes no schema either: the Detail pane's toolbar
@@ -224,7 +225,7 @@ own version 1 so it can be stepped back to. Nothing has to be deleted. 0.9.0
 adds an `assigned_to` column and the `assignees` table behind the Assigned To
 dropdown, both of which `auto_migrate` adds to an existing database on first
 start; every task starts unassigned and the list starts empty. 0.10.0
-changes no schema: the Add URL / Add Text / Add Link dialogs read a new
+changes no schema: the reference add dialogs read a new
 lookup service over the tables that were already there. 0.11.0 changes no
 schema either: the References pane's Task Title is joined in by the
 `task_refs` query, which mkio 0.8.0 keeps live, so nothing new is stored.
@@ -262,6 +263,12 @@ says so). It also raises the mkio floor to 1.6.0, the first mkio to send
 `Cache-Control: no-cache` on the files it serves: before it a browser could
 keep running an old mkui table for days after an upgrade, which is how a
 caret bug mkui fixed in 1.2.1 went on being seen.
+0.17.0 changes no schema, only words: **Add URL** is now **Add Link**, and
+the old **Add Link** is **Reference Task**. A *link* is a URL reference; one
+task referring to another is a *task reference* to a *related task*. The
+stored kinds are still `url` and `task`, so a database carries over as is —
+though Last Events and Activity lines recorded before the upgrade keep the
+old wording (*Added a URL*, *Linked: blocks …*).
 
 ## Development
 
@@ -274,9 +281,9 @@ python -m pytest
 The tests cover the CLI and config loading, Task ID formatting, a real
 server over HTTP and WebSocket (every task op, splitting and the cascades,
 moving a task to another parent or the top level, the Task ID sequence
-across restarts and past eight digits, references and task links with their
+across restarts and past eight digits, references and task references with their
 validation, the same-tree rule, and cascades,
-user-defined relations (seeding, uniqueness, rename rewriting links in both
+user-defined relations (seeding, uniqueness, rename rewriting task references in both
 directions, a swap flipping them, delete refused in use), file upload,
 dedupe, and cleanup, live delete announcements, the query filter, saved
 layouts, the port, host, user, and files flags), the port probe on a
