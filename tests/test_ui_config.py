@@ -590,7 +590,8 @@ def test_the_toolbar_acts_on_the_pane_cursor(app_config):
     for name in ("addLink", "addText", "referenceTask"):
         assert f'addBorrowed("{name}")' in js, f"{name} is not on the toolbar"
     order = [m for m in re.findall(r'toolbarBtn\("([^"]+)"', js)]
-    assert order == ["Edit", "Add Link", "Add Text", "Reference Task", "History", "Delete"], order
+    assert order == ["Back", "Forward", "Edit", "Add Link", "Add Text", "Reference Task",
+                     "History", "Delete"], order
     assert "openBorrowed(name, task ?? {})" in js, "the add dialogs open with or without a task"
     assert 'openBorrowed("editRef", ref)' in js and 'openBorrowed("editTask", task)' in js,         "Edit opens the dialog the cursor calls for"
     assert 'openBorrowed("deleteRef", ref)' in js
@@ -649,6 +650,55 @@ def test_go_to_selects_the_related_task(app_config):
     # the three outcomes table.select reports are all handled
     for outcome in ("selected", "hidden", "missing"):
         assert f"result?.{outcome}" in js, f"refs.js ignores a {outcome} result"
+
+
+def test_go_to_leaves_a_trail_back():
+    """Back and Forward on the Detail toolbar: only a "Go to" that lands adds
+    to the trail, a new one abandons the forward branch, and a step returns to
+    the reference line it left from."""
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
+    assert 'toolbarBtn("Back", step(back, forward, "Back"), "chevron-left")' in js
+    assert 'toolbarBtn("Forward", step(forward, back, "Forward"), "chevron-right")' in js
+    # They are icons, drawn by mkui's own `icon`, deep-imported: the label is
+    # the accessible name, and the module and both icons must exist.
+    import mkui
+    path = re.search(r'import \{ icon \} from "/mkui/(src/lib/icons\.js)"', js)
+    assert path, "refs.js imports mkui's icons"
+    icons = (Path(mkui.static_dir) / path.group(1)).read_text(encoding="utf-8")
+    assert "export function icon(" in icons
+    for name in ("chevron-left", "chevron-right"):
+        assert f'"{name}":' in icons, f"mkui has no {name} icon"
+    assert 'btn.setAttribute("aria-label", label)' in js
+    assert ".task-refs-icon-btn" in (STATIC / "mktask.css").read_text(encoding="utf-8")
+    assert js.index('toolbarBtn("Back"') < js.index('toolbarBtn("Edit"'), "Back leads the toolbar"
+    assert "backBtn.disabled = !back.length" in js and "forwardBtn.disabled = !forward.length" in js
+    assert js.count("back.push(") == 1, "only Go to adds to the trail"
+    assert "forward.length = 0" in js, "a new Go to abandons the forward branch"
+    assert "if (result.missing) { skipped += 1; continue; }" in js, "a deleted task is passed over"
+    assert "pending.task_id === taskId && refs.has(pending.ref_id)" in js, "lands on the line it left"
+    assert "localStorage" not in js and "sessionStorage" not in js, "the trail is the page's alone"
+    # Both directions are capped, and the cap is one constant.
+    assert re.search(r"const TRAIL_MAX = \d+;", js)
+    assert "if (back.length > TRAIL_MAX) back.shift()" in js
+    assert "if (to.length > TRAIL_MAX) to.shift()" in js
+    # Go to records the place only once the jump has landed, and never a jump
+    # to the task already shown.
+    go = js[js.index("const goTo = (ref) =>"):js.index("const step = ")]
+    assert go.index("if (!result.selected) return") < go.index("back.push(from)")
+    assert "from.task_id !== ref.href" in go
+    # A step that cannot be shown keeps its place on the trail; one onto the
+    # task already shown leaves nothing behind it.
+    step = js[js.index("const step = "):js.index("let statusEl")]
+    assert "from.push(entry);" in step, "a hidden place stays on the trail"
+    assert "here.task_id !== entry.task_id" in step
+    assert "refusal(entry.task_id, result)" in step, "a refused step says why"
+    # Selecting another task by hand mid-step drops the line it was landing on.
+    assert "if (pending && pending.task_id !== id) pending = null" in js
+    # History selects the task already shown: it is no jump, and uses no `jump`.
+    history = js[js.index("const historyCursor"):js.index("const toolbarBtn")]
+    assert "jump(" not in history and "back.push" not in history
+    # The landed line is brought into view.
+    assert 'scrollIntoView({ block: "nearest" })' in js
 
 
 def test_every_lookup_service_is_used_and_exists(app_config, server_config):

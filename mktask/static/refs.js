@@ -43,13 +43,21 @@
 // filters hide comes back `hidden` rather than selected — the default
 // filter shows open tasks only, so a complete related task lands there —
 // and `reveal` (config) then clears the status filter and tries again.
+//
+// A "Go to" that lands remembers where it left from — the task and the
+// reference line — and `Back` on the toolbar returns there, `Forward` undoes
+// a Back. Only "Go to" adds to the trail: a click in the blotter is not a
+// jump, or Back would walk through every row passed on the way. The trail is
+// this page's alone, kept in memory and gone on a reload.
 
 import { registerWidget, ensureMkio } from "/mkui/src/index.js";
+import { icon } from "/mkui/src/lib/icons.js";
 
 const UPLOAD_URL = "/files";
 const REFS_SERVICE = "task_refs";
 const TASKS_SERVICE = "all_tasks";
 const TASKS_SUBID = "task-refs-tasks";
+const TRAIL_MAX = 50;   // the places Back remembers; the oldest falls off
 
 // The sections below the task references, in the order they are shown: the
 // snippets first, since what was written down about a task reads before what
@@ -143,7 +151,7 @@ function renderRefLine(ref, { onGoTo, expanded, owner } = {}) {
     if (onGoTo) {
       const go = el("button", "task-refs-goto", "Go to");
       go.type = "button";
-      go.addEventListener("click", (ev) => { ev.stopPropagation(); onGoTo(ref.href); });
+      go.addEventListener("click", (ev) => { ev.stopPropagation(); onGoTo(ref); });
       line.appendChild(go);
     }
     return line;
@@ -241,7 +249,9 @@ registerWidget("task-refs", (spec, app, host) => {
   const select = (taskId) =>
     app.fireAction("table.select", { pane: tasksPane, keys: [taskId] });
 
-  const goTo = (taskId) => {
+  /** Select a task in the Tasks pane, revealing it when a filter hides it.
+   *  Says how it went; the caller words the status line. */
+  const jump = (taskId) => {
     let result = select(taskId);
     let revealed = false;
     if (result?.hidden?.length && spec.reveal) {
@@ -251,14 +261,71 @@ registerWidget("task-refs", (spec, app, host) => {
       result = select(taskId);
       revealed = !!result?.selected?.length;
     }
-    if (result?.selected?.length) {
-      return setStatus(revealed ? `Selected ${taskId} (showing all tasks)` : `Selected ${taskId}`);
+    return {
+      selected: !!result?.selected?.length,
+      hidden: !!result?.hidden?.length,
+      missing: !!result?.missing?.length,
+      revealed,
+    };
+  };
+
+  /** Why a jump did not land, for the status line. */
+  const refusal = (taskId, result) =>
+    result.hidden ? `${taskId} is hidden by a filter (Tasks › Show All)`
+      : result.missing ? `No task ${taskId}`
+        : `Cannot open ${taskId}`;
+
+  // The trail: the places a "Go to" left from, and the ones a Back left from.
+  const back = [];      // { task_id, ref_id }, the most recent last
+  const forward = [];
+  let pending = null;   // the place a step is landing on, until its line is there
+
+  /** Where the pane is now: the task, and the reference under the cursor. */
+  const place = () => (taskId
+    ? { task_id: taskId, ref_id: cursor?.kind === "ref" ? cursor.ref_id : null }
+    : null);
+
+  const goTo = (ref) => {
+    const from = taskId ? { task_id: taskId, ref_id: ref.ref_id } : null;
+    const result = jump(ref.href);
+    if (!result.selected) return setStatus(refusal(ref.href, result), true);
+    if (from && from.task_id !== ref.href) {
+      back.push(from);
+      if (back.length > TRAIL_MAX) back.shift();
+      forward.length = 0;   // a new jump abandons what Back had left behind
     }
-    if (result?.hidden?.length) {
-      return setStatus(`${taskId} is hidden by a filter (Tasks › Show All)`, true);
+    setStatus(result.revealed ? `Selected ${ref.href} (showing all tasks)` : `Selected ${ref.href}`);
+    updateButtons();
+  };
+
+  /** Back, or Forward: return to the last place on `from`, leaving this one
+   *  on `to`. A task deleted since is passed over, and said to have been. */
+  const step = (from, to, word) => () => {
+    let skipped = 0;
+    let said = null;
+    while (from.length) {
+      const entry = from.pop();
+      const here = place();
+      const result = jump(entry.task_id);
+      if (result.missing) { skipped += 1; continue; }
+      if (!result.selected) {
+        from.push(entry);   // still there to return to once it can be shown
+        setStatus(refusal(entry.task_id, result), true);
+        render();
+        return;
+      }
+      if (here && here.task_id !== entry.task_id) {
+        to.push(here);
+        if (to.length > TRAIL_MAX) to.shift();
+      }
+      pending = entry.ref_id != null ? entry : null;
+      said = `${word} to ${entry.task_id}` + (result.revealed ? " (showing all tasks)" : "");
+      break;
     }
-    if (result?.missing?.length) return setStatus(`No task ${taskId}`, true);
-    setStatus(`Cannot open ${taskId}`, true);
+    const passed = skipped ? `${skipped} deleted ${skipped === 1 ? "task" : "tasks"} skipped` : "";
+    if (said) setStatus(passed ? `${said}; ${passed}` : said);
+    else setStatus(passed ? `Nowhere to go: ${passed}` : "Nowhere to go", true);
+    render();
   };
 
   let statusEl = null;
@@ -390,9 +457,16 @@ registerWidget("task-refs", (spec, app, host) => {
     setStatus(revealed ? `History of ${what} (showing all tasks)` : `History of ${what}`);
   });
 
-  const toolbarBtn = (label, onClick) => {
-    const btn = el("button", "mkui-btn mkui-toolbar-btn", label);
+  /** A toolbar button. With `iconName` it shows one of mkui's icons and the
+   *  label becomes its accessible name. */
+  const toolbarBtn = (label, onClick, iconName) => {
+    const btn = el("button", "mkui-btn mkui-toolbar-btn", iconName ? null : label);
     btn.type = "button";
+    if (iconName) {
+      btn.classList.add("task-refs-icon-btn");
+      btn.setAttribute("aria-label", label);
+      btn.appendChild(icon(iconName));
+    }
     btn.addEventListener("click", onClick);
     toolbar.appendChild(btn);
     return btn;
@@ -401,6 +475,10 @@ registerWidget("task-refs", (spec, app, host) => {
   // context, and an empty one is what a table button with nothing selected
   // passes. Nothing here gates them: the dialog asks for the task instead.
   const addBorrowed = (name) => guarded(() => openBorrowed(name, task ?? {}));
+  const backBtn = toolbarBtn("Back", step(back, forward, "Back"), "chevron-left");
+  backBtn.title = "Back: return to where the last Go to left from";
+  const forwardBtn = toolbarBtn("Forward", step(forward, back, "Forward"), "chevron-right");
+  forwardBtn.title = "Forward: undo the last Back";
   const editBtn = toolbarBtn("Edit", editCursor);
   toolbarBtn("Add Link", addBorrowed("addLink"));
   toolbarBtn("Add Text", addBorrowed("addText"));
@@ -416,9 +494,12 @@ registerWidget("task-refs", (spec, app, host) => {
   const armedStyle = (borrowedButton("deleteRef")?.style ?? [])
     .find((rule) => rule.when === "enabled") ?? null;
 
-  /** Edit and History follow the cursor; Delete is a reference's alone. */
+  /** Edit and History follow the cursor; Delete is a reference's alone;
+   *  Back and Forward are there while the trail has somewhere to go. */
   function updateButtons() {
     const ref = cursorRef();
+    backBtn.disabled = !back.length;
+    forwardBtn.disabled = !forward.length;
     editBtn.disabled = !ref && !task;
     historyBtn.disabled = !ref && !task;
     deleteBtn.disabled = !ref;
@@ -527,6 +608,14 @@ registerWidget("task-refs", (spec, app, host) => {
       appliedRefId = openId = selectedRefId;
       cursor = { kind: "ref", ref_id: selectedRefId };
     }
+    // A Back or Forward lands on the line it left from, once that line is
+    // here: the task's references arrive after the task does.
+    let landed = false;
+    if (pending && pending.task_id === taskId && refs.has(pending.ref_id)) {
+      cursor = { kind: "ref", ref_id: pending.ref_id };
+      pending = null;
+      landed = true;
+    }
     // The reference the cursor was on can be deleted out from under it.
     if (cursor?.kind === "ref" && !refs.has(cursor.ref_id)) cursor = task ? { kind: "task" } : null;
     const markedId = cursor?.kind === "ref" ? cursor.ref_id : null;
@@ -581,6 +670,10 @@ registerWidget("task-refs", (spec, app, host) => {
         }
         list.appendChild(item);
       }
+    }
+    if (landed) {
+      list.querySelector(".task-refs-item-marked, .task-refs-tile-marked")
+        ?.scrollIntoView({ block: "nearest" });
     }
   }
 
@@ -696,6 +789,7 @@ registerWidget("task-refs", (spec, app, host) => {
       taskId = id;
       openId = appliedRefId = null;
       cursor = task ? { kind: "task" } : null;
+      if (pending && pending.task_id !== id) pending = null;   // selected away mid-step
       applyScope();
     }
     render();

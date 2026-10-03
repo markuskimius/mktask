@@ -94,7 +94,13 @@ the same line in the Detail pane, and a reference the Detail pane does not
 list leaves it alone. A task reference shows on both tasks, worded from each side,
 and *Go to* selects the related task in the blotter, so the Detail and
 References panes follow it (a related task the current filter hides is revealed
-first). Only tasks from different trees can reference each other; tasks that share a root
+first). The two chevrons that lead the Detail toolbar are *Back* and *Forward*: Back
+returns to the task, and the reference line, the last *Go to* left from, and
+Forward undoes a Back. Only *Go to* adds to that trail (a click in the blotter
+is not a jump), a new *Go to* after a Back drops what Forward had, a task
+deleted since is passed over, and one the filter hides is revealed, as *Go to*
+reveals it. The trail holds the last 50 places and does not outlive the page.
+Only tasks from different trees can reference each other; tasks that share a root
 are already related by splitting.
 
 **Relations are yours to define** under Configure › Relations: each is a pair
@@ -200,7 +206,8 @@ written as a mirrored pair, labels follow the related task's title, a
 renamed relation rewrites its task references, orphaned files are removed).
 `static/refs.js` is the one custom widget and the whole Detail body: the
 toolbar, the task block, the drop box, the reference list of the selected
-task and its descendants (its own live queries), and *Go to*. Its Edit and
+task and its descendants (its own live queries), *Go to*, and the Back /
+Forward trail it leaves. Its Edit and
 Delete open the dialogs the Tasks and References panes already declare,
 borrowed from `app.json` by pane and button name rather than copied.
 
@@ -269,6 +276,8 @@ task referring to another is a *task reference* to a *related task*. The
 stored kinds are still `url` and `task`, so a database carries over as is —
 though Last Events and Activity lines recorded before the upgrade keep the
 old wording (*Added a URL*, *Linked: blocks …*).
+0.18.0 changes no schema and nothing on the server: **Back** and **Forward**
+on the Detail toolbar are the page's own memory of where *Go to* left from.
 
 ## Development
 

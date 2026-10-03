@@ -13,6 +13,21 @@
   z-index: 1;
 }
 
+/* Back and Forward: an icon each, square, so the pair reads as one control. */
+.task-refs-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+/* A pixel under mkui's 16, so the button stands as tall as its text neighbours. */
+.task-refs-icon-btn .mkui-icon {
+  width: 15px;
+  height: 15px;
+}
+
 .task-refs-main {
   padding: 0.5em 0.75em 0.75em;
 }
