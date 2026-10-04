@@ -149,7 +149,7 @@ class TestHttp:
         async with aiohttp.ClientSession() as s:
             for path, expect in [
                 ("/", "mktask"),
-                ("/static/app.json", "menubar"),
+                ("/config/app.json", "menubar"),
                 ("/static/mktask.css", "mktask"),
                 ("/mkio.js", "mkio"),
                 ("/mkui/src/index.js", "Mkui"),
@@ -157,6 +157,23 @@ class TestHttp:
                 async with s.get(server + path) as resp:
                     assert resp.status == 200, path
                     assert expect in await resp.text(), path
+
+    async def test_ui_config_is_the_toml_served_as_json(self, server):
+        """The browser is handed exactly what config/app.toml says, as JSON
+        and revalidated on every load; the static route no longer has it."""
+        import tomllib
+        from pathlib import Path
+        toml = Path(__file__).resolve().parent.parent / "mktask" / "config" / "app.toml"
+        async with aiohttp.ClientSession() as s:
+            async with s.get(server + "/config/app.json") as resp:
+                assert resp.status == 200
+                assert resp.content_type == "application/json"
+                assert resp.headers["Cache-Control"] == "no-cache"
+                assert await resp.json() == tomllib.loads(toml.read_text(encoding="utf-8"))
+            async with s.get(server + "/static/app.json") as resp:
+                assert resp.status == 404
+            async with s.get(server + "/config/nothing.json") as resp:
+                assert resp.status == 404
 
     async def test_services(self, server):
         async with aiohttp.ClientSession() as s:

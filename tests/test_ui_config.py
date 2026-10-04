@@ -1,6 +1,6 @@
-"""Static integrity checks on the UI config (app.json) and its assets.
+"""Static integrity checks on the UI config (app.toml) and its assets.
 
-app.json drives the whole UI declaratively, so a dangling pane reference, a
+app.toml drives the whole UI declaratively, so a dangling pane reference, a
 misspelled service, or a JS module that no longer exists fails silently in
 the browser rather than at import time. These tests fail the build instead.
 """
@@ -23,6 +23,7 @@ from mkio.history import (
 
 PKG = Path(__file__).resolve().parent.parent / "mktask"
 STATIC = PKG / "static"
+APP_TOML = PKG / "config" / "app.toml"
 
 #: Ops TaskTransactions implements itself, with no steps in the TOML: each
 #: expands to mkio's per-row cursor moves over every row one action wrote.
@@ -49,7 +50,7 @@ MKUI_ACTIONS = {
 
 @pytest.fixture(scope="module")
 def app_config() -> dict:
-    return json.loads((STATIC / "app.json").read_text(encoding="utf-8"))
+    return tomllib.loads(APP_TOML.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -141,6 +142,20 @@ def test_index_imports_resolve():
             assert (Path(mkui.static_dir) / path[len("/mkui/"):]).is_file(), path
         elif path.startswith("/static/"):
             assert (STATIC / path[len("/static/"):]).is_file(), path
+
+
+def test_index_fetches_the_config_the_server_serves(server_config):
+    """The UI is written as TOML and fetched as JSON: mkio's [config] route
+    answers `<route>/app.json` from `app.toml` in the route's directory. A
+    real app.json beside it would be dead weight the TOML shadows."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    (url,) = re.findall(r'fetch\("([^"]+)"', html)
+    route, _, name = url.rpartition("/")
+    assert name == "app.json"
+    directory = PKG / server_config["config"][route]
+    assert directory / "app.toml" == APP_TOML and APP_TOML.is_file()
+    assert not (directory / "app.json").exists()
+    assert not (STATIC / "app.json").exists(), "the config left the static route"
 
 
 def test_no_pinned_server_version(app_config):
@@ -374,7 +389,7 @@ def test_text_widgets_read_declared_state(app_config):
 def test_statusbar_shows_name_and_server_version(app_config):
     """The right-hand statusbar text names the app and shows the version the
     server announced in its `_mkio` reply, which mkui publishes as
-    `state.mkio.server.version` -- the app.json cannot know its own version, and
+    `state.mkio.server.version` -- the app.toml cannot know its own version, and
     pinning one in `mkio.expect` would make every release a mismatch."""
     texts = [w["text"] for w in app_config["statusbar"]["right"] if w.get("type") == "text"]
     assert any(t.startswith("mktask") and "state.mkio.server.version" in t for t in texts), texts
@@ -425,11 +440,11 @@ def test_shortcuts_box_lists_every_menu_shortcut(app_config):
 
 
 def test_about_box_carries_no_version_of_its_own(app_config):
-    """mkui heads the About box with `app.title` and `app.version`. app.json
+    """mkui heads the About box with `app.title` and `app.version`. app.toml
     cannot know its own version, so there is no `app.version` and the heading
     is the statusbar's template over the version the server announced."""
     app = app_config["app"]
-    assert "version" not in app, "a version in app.json goes stale on the next release"
+    assert "version" not in app, "a version in app.toml goes stale on the next release"
     heading = app["about"]["heading"]
     assert heading.startswith("mktask") and "state.mkio.server.version" in heading
     right = [w["text"] for w in app_config["statusbar"]["right"] if w.get("type") == "text"]
@@ -852,8 +867,9 @@ def test_status_gates_on_complete_and_reopen(tasks_pane):
 
 
 def test_the_word_done_is_gone(app_config, server_config):
-    """A task is open or complete; "done" is not a status, a label, or an op."""
-    text = json.dumps(app_config) + (PKG / "mktask.toml").read_text(encoding="utf-8")
+    """A task is open or complete; "done" is not a status, a label, or an op
+    -- nor a word in either file's comments, which is why both are read raw."""
+    text = APP_TOML.read_text(encoding="utf-8") + (PKG / "mktask.toml").read_text(encoding="utf-8")
     assert not re.search(r"\bdone\b", text, re.IGNORECASE)
 
 

@@ -195,9 +195,13 @@ python -c "import mktask, pathlib; print(pathlib.Path(mktask.__file__).parent / 
 ```
 
 `mktask.toml` declares the SQLite tables, the mkio services, and the static
-routes (keep `relations.json`, the seed for the relations table, beside a
-copied config); `static/app.json` next to it declares the UI (menus, panes,
-frames, dialogs). Both are plain config — see the mkio and mkui READMEs for the
+and config routes (keep `relations.json`, the seed for the relations table, beside a
+copied config); `config/app.toml` next to it declares the UI (menus, panes,
+frames, dialogs), which mkio serves to the browser as `/config/app.json`.
+A copied `mktask.toml` looks for `static/` and `config/` beside itself, so
+copy those two directories with it (or point its `[static]` and `[config]`
+routes at where they are).
+Both are plain TOML — see the mkio and mkui READMEs for the
 formats. The one piece of code is `mktask/services.py`, which the `tasks`
 service points at: it assigns Task IDs, runs the complete, reopen, and
 delete cascades, re-parents a task on a move (refusing a cycle or a move
@@ -209,7 +213,7 @@ toolbar, the task block, the drop box, the reference list of the selected
 task and its descendants (its own live queries), *Go to*, and the Back /
 Forward trail it leaves. Its Edit and
 Delete open the dialogs the Tasks and References panes already declare,
-borrowed from `app.json` by pane and button name rather than copied.
+borrowed from `app.toml` by pane and button name rather than copied.
 
 ## Upgrading
 
@@ -278,6 +282,19 @@ though Last Events and Activity lines recorded before the upgrade keep the
 old wording (*Added a URL*, *Linked: blocks …*).
 0.18.0 changes no schema and nothing on the server: **Back** and **Forward**
 on the Detail toolbar are the page's own memory of where *Go to* left from.
+0.19.0 changes no schema and nothing you can see: the UI config is now TOML,
+`config/app.toml`, where it was `static/app.json`, so it can carry comments.
+The browser still receives JSON, at `/config/app.json`. Only a customized
+copy needs attention: add
+
+```toml
+[config]
+"/config" = "./config"
+```
+
+to a copied `mktask.toml`, and put the UI config in a `config/` directory
+beside it. An `app.json` you edited can move there as it is — it is served
+unchanged when no `app.toml` sits next to it.
 
 ## Development
 
@@ -298,7 +315,7 @@ dedupe, and cleanup, live delete announcements, the query filter, saved
 layouts, the port, host, user, and files flags), the port probe on a
 fake Windows, what only breaks on Windows (every text read names its
 encoding, LF pinned), and the static integrity of
-`app.json` against `mktask.toml` and `refs.js` (every column, dialog field,
+`app.toml` against `mktask.toml` and `refs.js` (every column, dialog field,
 service, and state path a pane names, the Detail pane's task block and the
 dialogs its toolbar borrows, and the reference sections against the kinds
 the server accepts).

@@ -379,7 +379,7 @@ ORDER BY status != 'open', lower(title), task_id
 # optionsFrom select prepends its own empty "nothing chosen" option and
 # cannot be preselected: with '' the two would be the same entry, and an
 # untouched dialog would promote the task. TaskTransactions maps the
-# sentinel back to ''; `required` in app.json refuses the empty option.
+# sentinel back to ''; `required` in app.toml refuses the empty option.
 [services.move_options]
 protocol = "reqrep"
 description = "Tasks a given task may be moved under, as value/label pairs for a dialog select"
@@ -424,3 +424,11 @@ sql = "SELECT id, saved, layout FROM mkui_layouts WHERE id = :id"
 [static]
 "/" = "./static"
 "/mkui" = "__mkui__"
+
+# ─── UI config ──────────────────────────────────────────────────────
+# The whole UI is config/app.toml. mkio serves it as /config/app.json,
+# parsed on every request, so the browser only ever sees JSON and an edit
+# shows on the next reload.
+
+[config]
+"/config" = "./config"

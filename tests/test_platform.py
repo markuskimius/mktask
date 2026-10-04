@@ -1,7 +1,7 @@
 """Guards for what only breaks on Windows.
 
 Python's default text encoding there is the ANSI code page, which cannot
-hold the em-dashes and box rules in mktask.toml, app.json, refs.js and the
+hold the em-dashes and box rules in mktask.toml, app.toml, refs.js and the
 sources, so every text read or write in the repository has to name its
 encoding; relations.json is read by mkio's seed loader in the default
 encoding, so it stays ASCII; and a checkout with autocrlf must not turn the
@@ -53,7 +53,7 @@ def test_repository_text_is_utf8():
     ANSI code page has no room for, so a default-encoded read gets them
     wrong. relations.json stays ASCII because mkio reads a seed in the
     default encoding, so a hand edit can never depend on the reader's."""
-    for name in ("mktask/mktask.toml", "mktask/static/app.json", "mktask/static/refs.js"):
+    for name in ("mktask/mktask.toml", "mktask/config/app.toml", "mktask/static/refs.js"):
         text = (ROOT / name).read_bytes().decode("utf-8")
         assert any(ord(c) > 127 for c in text), name
     (ROOT / "mktask" / "relations.json").read_bytes().decode("ascii")
@@ -63,6 +63,6 @@ def test_checkout_pins_lf_line_endings():
     rules = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
     assert "* text=auto eol=lf" in rules
     assert "*.db binary" in rules
-    for name in ("mktask/mktask.toml", "mktask/static/app.json", "mktask/static/index.html",
+    for name in ("mktask/mktask.toml", "mktask/config/app.toml", "mktask/static/index.html",
                  "mktask/static/refs.js"):
         assert b"\r" not in (ROOT / name).read_bytes(), name

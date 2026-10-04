@@ -38,6 +38,13 @@ class TestLoadConfig:
         cfg = cli._load_config(toml)
         assert cfg["static"]["/"] == str((tmp_path / "www").resolve())
 
+    def test_resolves_relative_config_route_against_toml_dir(self, tmp_path, monkeypatch):
+        toml = tmp_path / "custom.toml"
+        toml.write_text('name = "x"\n[config]\n"/config" = "./ui"\n', encoding="utf-8")
+        monkeypatch.chdir(tmp_path.parent)
+        cfg = cli._load_config(toml)
+        assert cfg["config"]["/config"] == str((tmp_path / "ui").resolve())
+
     def test_dict_config_resolves_against_cwd(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         cfg = cli._load_config({"name": "x", "static": {"/": "./www", "/mkui": "__mkui__"}})
@@ -50,6 +57,7 @@ class TestLoadConfig:
         assert cfg["host"] == "127.0.0.1"
         assert cfg["db_path"] == "mktask.db"
         assert (Path(cfg["static"]["/"]) / "index.html").is_file()
+        assert (Path(cfg["config"]["/config"]) / "app.toml").is_file()
 
 
 class TestFindConfig:

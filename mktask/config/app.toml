@@ -1,0 +1,1146 @@
+# mktask's whole UI: menubar, statusbar, dialogs, panes, frames, layouts.
+#
+# mkio serves this file as /config/app.json (the [config] route in
+# mktask.toml), parsed on every request; index.html fetches that and hands it
+# to mkui's setConfig. Name a column in mktask.toml before using it here:
+# tests/test_ui_config.py holds every service, op, field and column named
+# below to the server config.
+#
+# Two things TOML asks of whoever edits this:
+#   - It has no null. "" stands in for one, and mkui reads it the same way.
+#   - A [table] under an [[array]] header belongs to the array element above
+#     it, so a block moved elsewhere in the file silently changes owner.
+
+# ─── app ───────────────────────────────────────────────────────────────
+
+# No `version` here: it would go stale on the next release. The About heading
+# and the statusbar both show the version the server announced.
+[app]
+title = "mktask"
+theme = "dark"
+description = "Work task prioritizer built on mkio and mkui"
+copyright = "© 2026 Mark Kim · Apache-2.0"
+links = [
+  { label = "GitHub", href = "https://github.com/markuskimius/mktask" },
+  { label = "Report an issue", href = "https://github.com/markuskimius/mktask/issues" },
+  { label = "License", href = "https://github.com/markuskimius/mktask/blob/main/LICENSE" },
+]
+
+[app.about]
+builtins = ["server", "mkui", "mkio"]
+heading = "mktask${IF(state.mkio.server.version, CONCAT(' ', state.mkio.server.version), '')}"
+
+# ─── state ─────────────────────────────────────────────────────────────
+
+# Declared so the panes that publish a selection have somewhere to put it.
+# "" is nothing selected.
+[state]
+status = { message = "Connecting...", background = "#858585", color = "#000" }
+selected_task = ""
+selected_ref = ""
+
+# ─── menubar ───────────────────────────────────────────────────────────
+
+[[menubar]]
+label = "Tasks"
+items = [
+  { label = "Tasks", action = "pane.show", args = "tasks" },
+  { label = "Detail", action = "pane.show", args = "task-detail" },
+  { label = "References", action = "pane.show", args = "references" },
+  { label = "Activity", action = "pane.show", args = "activity" },
+]
+
+[[menubar]]
+label = "Edit"
+items = [
+  { label = "Undo", action = "edit.undo" },
+  { label = "Redo", action = "edit.redo" },
+  { sep = true },
+  { label = "Copy", action = "edit.copy", shortcut = "mod+C" },
+  { label = "Select All", action = "edit.selectAll", shortcut = "mod+A" },
+]
+
+# The two lists that are settings rather than work.
+[[menubar]]
+label = "Configure"
+items = [
+  { label = "Relations", action = "pane.show", args = "relations" },
+  { label = "Assignees", action = "pane.show", args = "assignees" },
+]
+
+[[menubar]]
+label = "Layout"
+items = [
+  { label = "Save Layout", action = "layout.save" },
+  { label = "Restore Layout", layouts = true },
+  { sep = true },
+  { label = "Reset to Default", action = "layout.reset" },
+]
+
+[[menubar]]
+label = "Window"
+
+[[menubar.items]]
+label = "Cascade"
+action = "window.cascade"
+
+[[menubar.items]]
+label = "Tile"
+items = [
+  { label = "Horizontal", action = "window.tileH" },
+  { label = "Vertical", action = "window.tileV" },
+  { label = "Grid", action = "window.grid" },
+]
+
+[[menubar.items]]
+sep = true
+
+[[menubar.items]]
+windows = true
+
+[[menubar]]
+label = "Help"
+items = [
+  { label = "Keyboard Shortcuts", action = "dialog.open", args = "shortcuts" },
+  { sep = true },
+  { label = "About", action = "dialog.about" },
+]
+
+# ─── dialogs ───────────────────────────────────────────────────────────
+
+# Help › Keyboard Shortcuts. Every menu `shortcut` hint above needs a line here.
+[dialogs.shortcuts]
+title = "Keyboard Shortcuts"
+kind = "info"
+width = 520
+heading = "Tables and dialogs"
+facts = [
+  { label = "Ctrl/Cmd+C", value = "Copy the selected rows" },
+  { label = "Ctrl/Cmd+A", value = "Select every row" },
+  { label = "Ctrl/Cmd+F", value = "Find in the focused table" },
+  { label = "Ctrl/Cmd+G", value = "Next match (with Shift: the previous one)" },
+  { label = "Escape", value = "Clear the selection, or close a dialog that is not pinned" },
+  { label = "Enter", value = "Submit a dialog from a single-line field" },
+  { label = "Ctrl/Cmd+Enter", value = "Submit a dialog from anywhere in it" },
+  { label = "Shift+click a header", value = "Sort by several columns" },
+  { label = "Shift+click a caret", value = "Unfold every level under it, or fold them all; on the header caret, the whole blotter" },
+  { label = "Alt+Shift+Left / Right", value = "Move the active tab within its group" },
+  { label = "Undo, Redo", value = "No key, on purpose: they change what everyone sees" },
+]
+buttons = [{ label = "Close", cancel = true, default = true }]
+
+# ─── statusbar ─────────────────────────────────────────────────────────
+
+[statusbar]
+left = [{ type = "text", bind = "status.message" }]
+right = [
+  { type = "text", text = "mktask${IF(state.mkio.server.version, CONCAT(' ', state.mkio.server.version), '')}" },
+]
+bindStyle = { color = "status.color", background = "status.background" }
+
+# ─── layouts ───────────────────────────────────────────────────────────
+
+[layouts]
+key = "mktask"
+keep = 10
+keepDays = 7
+
+# ─── panes.tasks ───────────────────────────────────────────────────────
+
+# The blotter. A tree on parent_task_id, opened folded on the roots.
+# `filterScope = "all"` tests every row against the status filter while
+# keeping the way to a match: a complete child under an open parent is hidden,
+# an open child keeps its complete parent in view.
+[panes.tasks]
+title = "Tasks"
+type = "mkio-table"
+service = "all_tasks"
+protocol = "query"
+columns = [
+  "task_id", "title", "score", "importance", "urgency", "due", "assigned_to", "status",
+  "last_event", "notes", "created_at", "_mkio_version",
+]
+# Virtual column: the placeholder for the real prioritization model.
+values = { score = "importance * urgency" }
+types = { due = "time", created_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" } }
+tree = { child = "parent_task_id", parent = "task_id", column = "task_id", expand = 0, filterScope = "all" }
+sort = ["-score", "created_at"]
+filters = { status = ["open"] }
+rowStyle = [{ when = "status == 'complete'", color = "#858585", strike = true }]
+select = { state = "selected_task" }
+link = { broadcast = { task_id = "task_id" }, chips = false }
+
+[panes.tasks.labels]
+task_id = "Task ID"
+title = "Title"
+score = "Score"
+importance = "Imp"
+urgency = "Urg"
+due = "Due"
+status = "Status"
+created_at = "Created"
+last_event = "Last Event"
+assigned_to = "Assigned To"
+notes = "Notes"
+
+[panes.tasks.styles]
+score = [
+  { when = "value >= 16", color = "#f44747", bold = true },
+  { when = "value >= 9", color = "#dcdcaa" },
+  { color = "#858585" },
+]
+status = [{ when = "value == 'complete'", color = "#4ec9b0" }]
+
+# No Reference button: adding one is the References pane's job. No dialog
+# sends task_id on add or split -- the server assigns it.
+[[panes.tasks.buttons]]
+label = "New"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.tasks.buttons.action.dialog]
+title = "New Task"
+modal = true
+width = 440
+submit = { label = "Create", service = "tasks", op = "add" }
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "title"
+label = "Title"
+type = "text"
+required = true
+placeholder = "What needs doing?"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+
+[[panes.tasks.buttons.action.dialog.fields.row]]
+name = "importance"
+label = "Importance"
+type = "select"
+width = 0.5
+value = 3
+options = [
+  { value = 1, label = "1 - Lowest" },
+  { value = 2, label = "2 - Low" },
+  { value = 3, label = "3 - Medium" },
+  { value = 4, label = "4 - High" },
+  { value = 5, label = "5 - Highest" },
+]
+
+[[panes.tasks.buttons.action.dialog.fields.row]]
+name = "urgency"
+label = "Urgency"
+type = "select"
+width = 0.5
+value = 3
+options = [
+  { value = 1, label = "1 - Lowest" },
+  { value = 2, label = "2 - Low" },
+  { value = 3, label = "3 - Medium" },
+  { value = 4, label = "4 - High" },
+  { value = 5, label = "5 - Highest" },
+]
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "due"
+label = "Due (YYYY-MM-DD, optional)"
+type = "text"
+placeholder = "2026-12-31"
+value = ""
+
+# The Assigned To picker is three fields. `_assignee` is the picker, whose
+# blank row (mkui's own) is unassigned and whose `__new__` row reveals
+# `_new_assignee`; both are scratch, and the hidden `assigned_to` is what is
+# sent. Edit and Split repeat this with the task's own name preselected.
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "_assignee"
+label = "Assigned To"
+type = "select"
+optionsFrom = { service = "assignee_options", value = "value", label = "label" }
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "_new_assignee"
+label = "New name"
+type = "text"
+required = "_assignee == '__new__'"
+showWhen = "_assignee == '__new__'"
+placeholder = "A name typed here joins the list"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "assigned_to"
+type = "hidden"
+compute = "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "notes"
+label = "Notes"
+type = "textarea"
+value = ""
+
+[[panes.tasks.buttons]]
+label = "Edit"
+unit = "row"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.tasks.buttons.action.dialog]
+title = "Edit Task ID ${row.task_id}"
+modal = true
+width = 440
+submit = { label = "Save", service = "tasks", op = "edit" }
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "task_id"
+type = "hidden"
+value = "${row.task_id}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "updated_at"
+type = "hidden"
+value = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "title"
+label = "Title"
+type = "text"
+required = true
+placeholder = "What needs doing?"
+value = "${row.title}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+
+[[panes.tasks.buttons.action.dialog.fields.row]]
+name = "importance"
+label = "Importance"
+type = "select"
+width = 0.5
+value = "${row.importance}"
+options = [
+  { value = 1, label = "1 - Lowest" },
+  { value = 2, label = "2 - Low" },
+  { value = 3, label = "3 - Medium" },
+  { value = 4, label = "4 - High" },
+  { value = 5, label = "5 - Highest" },
+]
+
+[[panes.tasks.buttons.action.dialog.fields.row]]
+name = "urgency"
+label = "Urgency"
+type = "select"
+width = 0.5
+value = "${row.urgency}"
+options = [
+  { value = 1, label = "1 - Lowest" },
+  { value = 2, label = "2 - Low" },
+  { value = 3, label = "3 - Medium" },
+  { value = 4, label = "4 - High" },
+  { value = 5, label = "5 - Highest" },
+]
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "due"
+label = "Due (YYYY-MM-DD, optional)"
+type = "text"
+placeholder = "2026-12-31"
+value = "${row.due}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "_assignee"
+label = "Assigned To"
+type = "select"
+compute = "row.assigned_to ?? ''"
+
+[panes.tasks.buttons.action.dialog.fields.optionsFrom]
+service = "task_assignee_options"
+params = { task_id = "${row.task_id}" }
+value = "value"
+label = "label"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "_new_assignee"
+label = "New name"
+type = "text"
+required = "_assignee == '__new__'"
+showWhen = "_assignee == '__new__'"
+placeholder = "A name typed here joins the list"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "assigned_to"
+type = "hidden"
+compute = "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "notes"
+label = "Notes"
+type = "textarea"
+value = "${row.notes}"
+
+# Wide because mkui clips a dialog's status line to one row, and the server's
+# refusals have to fit. The top level is the `__top__` option, not "": mkui
+# prepends a blank of its own, which `required` refuses.
+[[panes.tasks.buttons]]
+label = "Move"
+unit = "row"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.tasks.buttons.action.dialog]
+title = "Move Task ID ${row.task_id}"
+modal = true
+width = 600
+footer = { note = "A moved task takes every task split from it along." }
+submit = { label = "Move", service = "tasks", op = "move" }
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "task_id"
+type = "hidden"
+value = "${row.task_id}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "updated_at"
+type = "hidden"
+value = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+label = "Task"
+type = "readonly"
+value = "${row.title}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+label = "Now"
+type = "readonly"
+value = "${IF(row.parent_task_id == '', 'top level', CONCAT('split from Task ID ', row.parent_task_id))}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "parent_task_id"
+label = "Parent"
+type = "select"
+required = true
+
+[panes.tasks.buttons.action.dialog.fields.optionsFrom]
+service = "move_options"
+params = { task_id = "${row.task_id}" }
+value = "value"
+label = "label"
+
+[[panes.tasks.buttons]]
+label = "Split"
+unit = "row"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.tasks.buttons.action.dialog]
+title = "Split Task ID ${row.task_id}"
+modal = true
+width = 440
+submit = { label = "Split", service = "tasks", op = "split" }
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "parent_task_id"
+type = "hidden"
+value = "${row.task_id}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+label = "Parent"
+type = "readonly"
+value = "${row.title}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "title"
+label = "Child task title"
+type = "text"
+required = true
+placeholder = "What part of it needs doing?"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+
+[[panes.tasks.buttons.action.dialog.fields.row]]
+name = "importance"
+label = "Importance"
+type = "select"
+width = 0.5
+value = "${row.importance}"
+options = [
+  { value = 1, label = "1 - Lowest" },
+  { value = 2, label = "2 - Low" },
+  { value = 3, label = "3 - Medium" },
+  { value = 4, label = "4 - High" },
+  { value = 5, label = "5 - Highest" },
+]
+
+[[panes.tasks.buttons.action.dialog.fields.row]]
+name = "urgency"
+label = "Urgency"
+type = "select"
+width = 0.5
+value = "${row.urgency}"
+options = [
+  { value = 1, label = "1 - Lowest" },
+  { value = 2, label = "2 - Low" },
+  { value = 3, label = "3 - Medium" },
+  { value = 4, label = "4 - High" },
+  { value = 5, label = "5 - Highest" },
+]
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "due"
+label = "Due (YYYY-MM-DD, optional)"
+type = "text"
+placeholder = "2026-12-31"
+value = "${row.due}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "_assignee"
+label = "Assigned To"
+type = "select"
+compute = "row.assigned_to ?? ''"
+
+[panes.tasks.buttons.action.dialog.fields.optionsFrom]
+service = "task_assignee_options"
+params = { task_id = "${row.task_id}" }
+value = "value"
+label = "label"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "_new_assignee"
+label = "New name"
+type = "text"
+required = "_assignee == '__new__'"
+showWhen = "_assignee == '__new__'"
+placeholder = "A name typed here joins the list"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "assigned_to"
+type = "hidden"
+compute = "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "notes"
+label = "Notes"
+type = "textarea"
+value = ""
+
+[[panes.tasks.buttons]]
+label = "History"
+unit = "row"
+enable = { connected = true }
+action = { type = "action", name = "table.history", args = { pane = "tasks" } }
+
+[[panes.tasks.buttons]]
+label = "Complete"
+enable = { connected = true, minSelected = 1, when = "ALL(rows, r -> r.status == 'open')" }
+
+[panes.tasks.buttons.action]
+type = "transaction"
+service = "tasks"
+op = "complete"
+
+[panes.tasks.buttons.action.data]
+task_id = "${row.task_id}"
+completed_at = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+updated_at = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+
+[[panes.tasks.buttons]]
+label = "Reopen"
+enable = { connected = true, minSelected = 1, when = "ALL(rows, r -> r.status == 'complete')" }
+
+[panes.tasks.buttons.action]
+type = "transaction"
+service = "tasks"
+op = "reopen"
+data = { task_id = "${row.task_id}", updated_at = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}" }
+
+# The dialog is the confirmation: mkui has none on a transaction button. Red
+# only when enabled, with no bold, so the button's width never shifts.
+[[panes.tasks.buttons]]
+label = "Delete"
+unit = "row"
+enable = { connected = true }
+style = [{ when = "enabled", background = "#c62828", color = "#fff" }]
+action.type = "dialog"
+
+[panes.tasks.buttons.action.dialog]
+title = "Delete Task ID ${row.task_id}"
+modal = true
+width = 460
+submit = { label = "Delete", service = "tasks", op = "delete" }
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "task_id"
+type = "hidden"
+value = "${row.task_id}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+label = "Delete this task and every task split from it?"
+type = "readonly"
+value = "${row.title}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+label = "This is permanent."
+type = "readonly"
+value = "The task, everything split from it, their references and all their history are deleted. This cannot be undone."
+
+# Undo and Redo point at the action-level ops, never mkio's per-row ones.
+# `columns` is spelled out so the diff leaves the derived `score` alone.
+[panes.tasks.history]
+table = "tasks"
+key = ["task_id"]
+feed = "task_versions"
+versions = "task_version_chain"
+state = "task_version_state"
+columns = ["title", "notes", "status", "importance", "urgency", "due", "parent_task_id", "last_event"]
+undo = { service = "tasks", op = "undo_action" }
+redo = { service = "tasks", op = "redo_action" }
+confirm = true
+
+# ─── panes.task-detail ─────────────────────────────────────────────────
+
+[panes.task-detail]
+title = "Detail"
+
+# One widget (static/refs.js) is the whole body. Its dialogs are borrowed from
+# the panes below by pane and button label, so the two places a task or a
+# reference is edited cannot drift.
+[[panes.task-detail.widgets]]
+type = "task-refs"
+class = "task-detail-refs"
+reveal = true
+
+[panes.task-detail.widgets.dialogs]
+addLink = { pane = "references", button = "Add Link" }
+addText = { pane = "references", button = "Add Text" }
+referenceTask = { pane = "references", button = "Reference Task" }
+editTask = { pane = "tasks", button = "Edit" }
+editRef = { pane = "references", button = "Edit" }
+deleteRef = { pane = "references", button = "Delete" }
+
+# ─── panes.references ──────────────────────────────────────────────────
+
+# Follows the Tasks selection through table linking (`link.listen`).
+# `task_title` comes from the service's join, so it is not in `history.columns`.
+[panes.references]
+title = "References"
+type = "mkio-table"
+service = "task_refs"
+protocol = "query"
+columns = ["task_id", "task_title", "kind", "relation", "label", "body", "created_at", "_mkio_version"]
+types = { created_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" } }
+sort = ["-created_at"]
+select = { state = "selected_ref" }
+link = { listen = { task_id = "task_id" }, chips = false }
+
+[panes.references.labels]
+task_id = "Task ID"
+task_title = "Task Title"
+kind = "Kind"
+relation = "Relation"
+label = "Reference"
+body = "Text"
+created_at = "Added"
+
+# The stored kind stays `url`. A Task ID is not a hyperlink, so a task
+# reference is never a LINK().
+[panes.references.display]
+kind = "${IF(kind == 'url', 'link', kind)}"
+label = "${IF(kind == 'task', CONCAT(href, '  ', label), IF(href == '', label, LINK(label, href)))}"
+
+[panes.references.styles]
+kind = [
+  { when = "value == 'task'", color = "#4ec9b0" },
+  { when = "value == 'file'", color = "#dcdcaa" },
+  { color = "#858585" },
+]
+
+# One add dialog per kind, `kind` hidden and fixed. Each opens on the selected
+# task but keeps the Task picker, and selects that task on submit so a
+# reference filed elsewhere is shown.
+[[panes.references.buttons]]
+label = "Add Link"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.references.buttons.action.dialog]
+title = "Add link${IF(task_id == '', '', CONCAT(' to Task ID ', task_id))}"
+modal = true
+width = 460
+footer = { note = "Files: drop, paste, or pick them in the Detail pane." }
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "task_id"
+label = "Task"
+type = "select"
+required = true
+value = "${state.selected_task.task_id}"
+optionsFrom = { service = "ref_owner_options", value = "value", label = "label" }
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "kind"
+type = "hidden"
+value = "url"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "_url"
+label = "URL"
+type = "text"
+required = true
+placeholder = "https://…, mailto:…"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "href"
+type = "hidden"
+compute = "_url"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "label"
+label = "Label"
+type = "text"
+compute = "_url"
+placeholder = "What to show for it"
+
+[panes.references.buttons.action.dialog.submit]
+label = "Add"
+service = "tasks"
+op = "add_ref"
+then = { action = "table.select", args = { pane = "tasks", keys = ["${task_id}"] } }
+
+[[panes.references.buttons]]
+label = "Add Text"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.references.buttons.action.dialog]
+title = "Add text${IF(task_id == '', '', CONCAT(' to Task ID ', task_id))}"
+modal = true
+width = 460
+footer = { note = "Files: drop, paste, or pick them in the Detail pane." }
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "task_id"
+label = "Task"
+type = "select"
+required = true
+value = "${state.selected_task.task_id}"
+optionsFrom = { service = "ref_owner_options", value = "value", label = "label" }
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "kind"
+type = "hidden"
+value = "text"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "body"
+label = "Text"
+type = "textarea"
+required = true
+placeholder = "Paste the email or conversation here"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "label"
+label = "Label"
+type = "text"
+compute = "FIRST(FILTER(SPLIT(body ?? '', '\\n'), l -> TRIM(l) != '')) ?? ''"
+placeholder = "What to show for it"
+
+[panes.references.buttons.action.dialog.submit]
+label = "Add"
+service = "tasks"
+op = "add_ref"
+then = { action = "table.select", args = { pane = "tasks", keys = ["${task_id}"] } }
+
+[[panes.references.buttons]]
+label = "Reference Task"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.references.buttons.action.dialog]
+title = "Reference a task${IF(task_id == '', '', CONCAT(' from Task ID ', task_id))}"
+modal = true
+width = 460
+footer.note = "The reference shows on both tasks, worded from each side. Relations are edited under Configure › Relations."
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "task_id"
+label = "Task"
+type = "select"
+required = true
+value = "${state.selected_task.task_id}"
+optionsFrom = { service = "ref_owner_options", value = "value", label = "label" }
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "kind"
+type = "hidden"
+value = "task"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "relation"
+label = "This task …"
+type = "select"
+required = true
+optionsFrom = { service = "relation_options", value = "value", label = "label" }
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "_task"
+label = "… that task"
+type = "select"
+required = true
+
+[panes.references.buttons.action.dialog.fields.optionsFrom]
+service = "task_options"
+params = { task_id = "${field.task_id}" }
+value = "value"
+label = "label"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "href"
+type = "hidden"
+compute = "_task"
+
+[panes.references.buttons.action.dialog.submit]
+label = "Add"
+service = "tasks"
+op = "add_ref"
+then = { action = "table.select", args = { pane = "tasks", keys = ["${task_id}"] } }
+
+# One dialog for every kind: `showWhen` picks the fields, and a hidden field
+# is not sent, so the op's defaults fill the rest.
+[[panes.references.buttons]]
+label = "Edit"
+unit = "row"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.references.buttons.action.dialog]
+title = "Edit ${IF(row.kind == 'url', 'link', row.kind)} reference"
+modal = true
+width = 460
+submit = { label = "Save", service = "tasks", op = "edit_ref" }
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "ref_id"
+type = "hidden"
+value = "${row.ref_id}"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "updated_at"
+type = "hidden"
+value = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+
+[[panes.references.buttons.action.dialog.fields]]
+label = "Task ID"
+type = "readonly"
+value = "${row.task_id}"
+
+[[panes.references.buttons.action.dialog.fields]]
+label = "Related task"
+type = "readonly"
+value = "${row.href}  ${row.label}"
+showWhen = "row.kind == 'task'"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "relation"
+label = "This task …"
+type = "select"
+required = true
+value = "${row.relation}"
+showWhen = "row.kind == 'task'"
+optionsFrom = { service = "relation_options", value = "value", label = "label" }
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "label"
+label = "Label"
+type = "text"
+value = "${row.label}"
+showWhen = "row.kind != 'task'"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "href"
+label = "URL"
+type = "text"
+required = true
+value = "${row.href}"
+showWhen = "row.kind == 'url'"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "body"
+label = "Text"
+type = "textarea"
+required = true
+value = "${row.body}"
+showWhen = "row.kind == 'text'"
+
+[[panes.references.buttons]]
+label = "History"
+unit = "row"
+enable = { connected = true }
+action = { type = "action", name = "table.history", args = { pane = "references" } }
+
+[[panes.references.buttons]]
+label = "Delete"
+unit = "row"
+enable = { connected = true }
+style = [{ when = "enabled", background = "#c62828", color = "#fff" }]
+action.type = "dialog"
+
+[panes.references.buttons.action.dialog]
+title = "Delete Reference"
+modal = true
+width = 460
+submit = { label = "Delete", service = "tasks", op = "delete_ref" }
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "ref_id"
+type = "hidden"
+value = "${row.ref_id}"
+
+[[panes.references.buttons.action.dialog.fields]]
+label = "Remove this reference from Task ID ${row.task_id}? A task reference is removed from both tasks."
+type = "readonly"
+value = "${row.label}"
+
+[[panes.references.buttons.action.dialog.fields]]
+label = "This is permanent."
+type = "readonly"
+value = "The reference and all its history are deleted. This cannot be undone."
+
+[panes.references.history]
+table = "task_refs"
+key = ["ref_id"]
+feed = "ref_versions"
+versions = "ref_version_chain"
+state = "ref_version_state"
+columns = ["kind", "relation", "label", "href", "body", "mime", "task_id"]
+undo = { service = "tasks", op = "undo_action" }
+redo = { service = "tasks", op = "redo_action" }
+confirm = true
+
+# ─── panes.relations ───────────────────────────────────────────────────
+
+# Opened from the Configure menu. Delete is refused by the server while any
+# task reference uses the relation; the refusal shows inline.
+[panes.relations]
+title = "Relations"
+type = "mkio-table"
+service = "all_relations"
+protocol = "query"
+columns = ["forward", "backward", "notes"]
+labels = { forward = "This task …", backward = "… that task", notes = "Notes" }
+sort = ["forward"]
+
+[[panes.relations.buttons]]
+label = "New"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.relations.buttons.action.dialog]
+title = "New Relation"
+modal = true
+width = 440
+footer.note = "A task reference reads \"A ${forward ?? '…'} B\" on one task and \"B ${IF(TRIM(backward ?? '') == '', forward ?? '…', backward)} A\" on the other."
+submit = { label = "Create", service = "tasks", op = "add_relation" }
+
+[[panes.relations.buttons.action.dialog.fields]]
+name = "forward"
+label = "This task … that task"
+type = "text"
+required = true
+placeholder = "blocks"
+value = ""
+
+[[panes.relations.buttons.action.dialog.fields]]
+name = "backward"
+label = "That task … this task"
+type = "text"
+placeholder = "${forward} (leave blank if it reads the same both ways)"
+
+[[panes.relations.buttons.action.dialog.fields]]
+name = "notes"
+label = "Notes"
+type = "textarea"
+value = ""
+
+[[panes.relations.buttons]]
+label = "Edit"
+unit = "row"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.relations.buttons.action.dialog]
+title = "Edit Relation"
+modal = true
+width = 440
+footer = { note = "Renaming rewrites every task reference that uses this relation." }
+submit = { label = "Save", service = "tasks", op = "edit_relation" }
+
+[[panes.relations.buttons.action.dialog.fields]]
+name = "relation_id"
+type = "hidden"
+value = "${row.relation_id}"
+
+[[panes.relations.buttons.action.dialog.fields]]
+name = "updated_at"
+type = "hidden"
+value = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}"
+
+[[panes.relations.buttons.action.dialog.fields]]
+name = "forward"
+label = "This task … that task"
+type = "text"
+required = true
+placeholder = "blocks"
+value = "${row.forward}"
+
+[[panes.relations.buttons.action.dialog.fields]]
+name = "backward"
+label = "That task … this task"
+type = "text"
+placeholder = "${forward} (leave blank if it reads the same both ways)"
+value = "${IF(row.forward == row.backward, '', row.backward)}"
+
+[[panes.relations.buttons.action.dialog.fields]]
+name = "notes"
+label = "Notes"
+type = "textarea"
+value = "${row.notes}"
+
+[[panes.relations.buttons]]
+label = "Delete"
+unit = "row"
+enable = { connected = true }
+style = [{ when = "enabled", background = "#c62828", color = "#fff" }]
+action.type = "dialog"
+
+[panes.relations.buttons.action.dialog]
+title = "Delete Relation"
+modal = true
+width = 380
+submit = { label = "Delete", service = "tasks", op = "delete_relation" }
+
+[[panes.relations.buttons.action.dialog.fields]]
+name = "relation_id"
+type = "hidden"
+value = "${row.relation_id}"
+
+[[panes.relations.buttons.action.dialog.fields]]
+label = "Delete this relation? Refused while any task reference uses it."
+type = "readonly"
+value = "${row.forward} / ${row.backward}"
+
+# ─── panes.activity ────────────────────────────────────────────────────
+
+# What happened to a task, append-only. Not the same thing as History, which
+# is a record's versions.
+[panes.activity]
+title = "Activity"
+type = "mkio-table"
+service = "task_activity"
+protocol = "query"
+columns = ["at", "action", "detail", "task_id", "actor"]
+labels = { at = "When", action = "Action", detail = "Detail", task_id = "Task ID", actor = "By" }
+sort = ["-event_id"]
+link = { listen = { task_id = "task_id" }, chips = false }
+
+# ─── panes.assignees ───────────────────────────────────────────────────
+
+# The Assigned To list and nothing else: no change here rewrites a task,
+# which is why its Delete does not say it cannot be undone.
+[panes.assignees]
+title = "Assignees"
+type = "mkio-table"
+service = "all_assignees"
+protocol = "query"
+columns = ["name", "notes"]
+labels = { name = "Name", notes = "Notes" }
+sort = ["name"]
+
+[[panes.assignees.buttons]]
+label = "New"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.assignees.buttons.action.dialog]
+title = "New Assignee"
+modal = true
+width = 440
+fields = [
+  { name = "name", label = "Name", type = "text", required = true, placeholder = "Who the task is assigned to" },
+  { name = "notes", label = "Notes", type = "textarea", value = "" },
+]
+submit = { label = "Create", service = "tasks", op = "add_assignee" }
+footer = { note = "The picker also adds a name typed straight into it." }
+
+[[panes.assignees.buttons]]
+label = "Edit"
+unit = "row"
+enable = { connected = true }
+action.type = "dialog"
+
+[panes.assignees.buttons.action.dialog]
+title = "Edit Assignee"
+modal = true
+width = 440
+fields = [
+  { name = "assignee_id", type = "hidden", value = "${row.assignee_id}" },
+  { name = "updated_at", type = "hidden", value = "${TIME(NOW(), '%Y-%m-%d %H:%M:%S')}" },
+  { name = "name", label = "Name", type = "text", required = true, placeholder = "Who the task is assigned to", value = "${row.name}" },
+  { name = "notes", label = "Notes", type = "textarea", value = "${row.notes}" },
+]
+submit = { label = "Save", service = "tasks", op = "edit_assignee" }
+
+[[panes.assignees.buttons]]
+label = "Delete"
+unit = "row"
+enable = { connected = true }
+style = [{ when = "enabled", background = "#c62828", color = "#fff" }]
+action.type = "dialog"
+
+[panes.assignees.buttons.action.dialog]
+title = "Delete Assignee"
+modal = true
+width = 460
+fields = [
+  { name = "assignee_id", type = "hidden", value = "${row.assignee_id}" },
+  { label = "Take this name off the list? Every task already assigned to it keeps it.", type = "readonly", value = "${row.name}" },
+]
+submit = { label = "Delete", service = "tasks", op = "delete_assignee" }
+
+# ─── frames ────────────────────────────────────────────────────────────
+
+# Default layout: Tasks over References on the left, Detail on the right.
+[[frames]]
+id = "main"
+x = 0.02
+y = 0.03
+w = 0.64
+h = 0.94
+
+[frames.layout]
+type = "split"
+dir = "v"
+ratios = [0.65, 0.35]
+children = [
+  { type = "tabs", active = 0, children = ["tasks"] },
+  { type = "tabs", active = 0, children = ["references"] },
+]
+
+[[frames]]
+id = "side"
+x = 0.68
+y = 0.03
+w = 0.3
+h = 0.94
+layout = { type = "tabs", active = 0, children = ["task-detail"] }
+
+# ─── mkio ──────────────────────────────────────────────────────────────
+
+# `expect` pins the server's name and expression language only. Never pin
+# `version`: every release would then show "Server mismatch".
+[mkio]
+url = "auto"
+expect = { name = "mktask", expr = "2" }
+connected = { "status.message" = "Connected", "status.color" = "", "status.background" = "" }
+disconnected = { "status.message" = "Disconnected", "status.color" = "#000", "status.background" = "#858585" }
+
+[mkio.incompatible]
+"status.message" = "Server mismatch"
+"status.color" = "#fff"
+"status.background" = "#cc0000"

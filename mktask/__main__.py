@@ -194,6 +194,10 @@ def _load_config(config: str | Path | dict[str, Any]) -> dict[str, Any]:
         else:
             statics[route] = str((config_dir / directory).resolve())
 
+    configs = cfg.get("config", {})
+    for route, directory in list(configs.items()):
+        configs[route] = str((config_dir / directory).resolve())
+
     return cfg
 
 

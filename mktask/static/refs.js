@@ -12,7 +12,7 @@
 // the Tasks pane's Edit dialog for the task, the References pane's for a
 // reference — while `Delete` is a reference's alone: a task is deleted from
 // the blotter, where the row you are deleting is the row you picked. **The
-// dialogs are borrowed from those panes by name** (`dialogs` in app.json),
+// dialogs are borrowed from those panes by name** (`dialogs` in app.toml),
 // never copied, so the two places a task is edited cannot drift apart.
 // mkio-table draws its toolbar itself and mkui has none for a widget pane,
 // so this one is drawn here with mkui's own classes.
@@ -67,7 +67,7 @@ const SECTIONS = [["text", "Snippets"], ["image", "Images"], ["file", "Files"], 
 const GRID_SECTIONS = new Set(["image"]);
 
 // The task's own fields, under the title, in the order the block shows them.
-// `score` is the blotter's derived column (`values.score` in app.json), not a
+// `score` is the blotter's derived column (`values.score` in app.toml), not a
 // stored one. A field whose value is empty is left out — a top-level task has
 // no parent to name, most tasks have no due date — except those in ALWAYS,
 // which say something by their value alone.
@@ -398,7 +398,7 @@ registerWidget("task-refs", (spec, app, host) => {
    *  the validation, the submit, and the server's refusal in its footer. */
   const openBorrowed = async (name, row) => {
     const dialog = borrowedButton(name)?.action?.dialog;
-    if (!dialog) throw new Error(`No ${name} dialog in app.json`);
+    if (!dialog) throw new Error(`No ${name} dialog in app.toml`);
     if (!client) throw new Error("Not connected");
     const { openDialog } = await import("/mkui/src/widgets/mkui-dialog.js");
     await openDialog(dialog, {
