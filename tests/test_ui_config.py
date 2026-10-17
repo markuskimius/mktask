@@ -244,6 +244,31 @@ def test_table_columns_exist(app_config, server_config):
                 assert col in known, f"{pane_id}.{key} names unknown column {col}"
 
 
+def test_every_column_is_in_the_picker(app_config, server_config):
+    """`columns` is the whole set the Columns picker offers, so a column left
+    out of it could not be shown at all; `visible` is what a pane opens on.
+    mkio's own columns are the exception: only the ones a pane names show."""
+    for pane_id, pane in _table_panes(app_config):
+        returned = {c for c in _columns_of(pane, server_config) if not c.startswith("_mkio_")}
+        missing = returned - set(pane["columns"])
+        assert not missing, f"{pane_id}.columns leaves out {sorted(missing)}"
+        assert "visible" in pane, f"{pane_id} opens on every column without a visible list"
+        assert set(pane["visible"]) <= set(pane["columns"]), f"{pane_id}.visible names a column not in columns"
+
+
+def test_the_blotter_offers_the_parent(tasks_pane):
+    """A flattened tree says which task a row was split from only through
+    this column. It sits beside the Task ID in the picker, off by default:
+    the tree says it already."""
+    assert "parent_task_id" not in tasks_pane["visible"]
+    assert tasks_pane["columns"].index("parent_task_id") == tasks_pane["columns"].index("task_id") + 1
+    assert tasks_pane["labels"]["parent_task_id"] == "Parent"
+
+
+def test_task_history_diffs_the_assignee(tasks_pane):
+    assert "assigned_to" in tasks_pane["history"]["columns"], "a reassignment is a version"
+
+
 def test_sort_names_known_columns(app_config, server_config):
     for pane_id, pane in _table_panes(app_config):
         known = _pane_columns(pane, _columns_of(pane, server_config))
@@ -1091,7 +1116,7 @@ def test_readonly_lines_carry_no_name(app_config):
 def test_relations_pane_and_dialogs(app_config, server_config):
     pane = app_config["panes"]["relations"]
     assert pane["service"] == "all_relations"
-    assert set(pane["columns"]) == {"forward", "backward", "notes"}
+    assert set(pane["visible"]) == {"forward", "backward", "notes"}
     by_label = {b["label"]: b["action"]["dialog"] for b in pane["buttons"]}
     assert set(by_label) == {"New", "Edit", "Delete"}
     new = _fields(by_label["New"])

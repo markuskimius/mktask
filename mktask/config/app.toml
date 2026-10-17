@@ -147,6 +147,11 @@ keepDays = 7
 
 # ─── panes.tasks ───────────────────────────────────────────────────────
 
+# Every table pane lists each column its query returns in `columns`, which is
+# what the Columns picker offers, and the ones it opens on in `visible`, which
+# is what Reset to default returns to. A column missing from `columns` could
+# not be shown at all.
+
 # The blotter. A tree on parent_task_id, opened folded on the roots.
 # `filterScope = "all"` tests every row against the status filter while
 # keeping the way to a match: a complete child under an open parent is hidden,
@@ -157,12 +162,16 @@ type = "mkio-table"
 service = "all_tasks"
 protocol = "query"
 columns = [
+  "task_id", "parent_task_id", "title", "score", "importance", "urgency", "due", "assigned_to", "status",
+  "last_event", "notes", "created_at", "updated_at", "completed_at", "_mkio_version",
+]
+visible = [
   "task_id", "title", "score", "importance", "urgency", "due", "assigned_to", "status",
   "last_event", "notes", "created_at", "_mkio_version",
 ]
 # Virtual column: the placeholder for the real prioritization model.
 values = { score = "importance * urgency" }
-types = { due = "time", created_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" } }
+types = { due = "time", created_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" }, updated_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" }, completed_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" } }
 tree = { child = "parent_task_id", parent = "task_id", column = "task_id", expand = 0, filterScope = "all" }
 sort = ["-score", "created_at"]
 filters = { status = ["open"] }
@@ -172,6 +181,7 @@ link = { broadcast = { task_id = "task_id" }, chips = false }
 
 [panes.tasks.labels]
 task_id = "Task ID"
+parent_task_id = "Parent"
 title = "Title"
 score = "Score"
 importance = "Imp"
@@ -179,6 +189,8 @@ urgency = "Urg"
 due = "Due"
 status = "Status"
 created_at = "Created"
+updated_at = "Updated"
+completed_at = "Completed"
 last_event = "Last Event"
 assigned_to = "Assigned To"
 notes = "Notes"
@@ -588,7 +600,7 @@ key = ["task_id"]
 feed = "task_versions"
 versions = "task_version_chain"
 state = "task_version_state"
-columns = ["title", "notes", "status", "importance", "urgency", "due", "parent_task_id", "last_event"]
+columns = ["title", "notes", "status", "importance", "urgency", "due", "assigned_to", "parent_task_id", "last_event"]
 undo = { service = "tasks", op = "undo_action" }
 redo = { service = "tasks", op = "redo_action" }
 confirm = true
@@ -623,8 +635,12 @@ title = "References"
 type = "mkio-table"
 service = "task_refs"
 protocol = "query"
-columns = ["task_id", "task_title", "kind", "relation", "label", "body", "created_at", "_mkio_version"]
-types = { created_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" } }
+columns = [
+  "task_id", "task_title", "kind", "relation", "label", "body", "href", "mime", "created_at", "updated_at",
+  "ref_id", "_mkio_version",
+]
+visible = ["task_id", "task_title", "kind", "relation", "label", "body", "created_at", "_mkio_version"]
+types = { created_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" }, updated_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" } }
 sort = ["-created_at"]
 select = { state = "selected_ref" }
 link = { listen = { task_id = "task_id" }, chips = false }
@@ -636,7 +652,11 @@ kind = "Kind"
 relation = "Relation"
 label = "Reference"
 body = "Text"
+href = "Target"
+mime = "Type"
 created_at = "Added"
+updated_at = "Updated"
+ref_id = "Ref ID"
 
 # The stored kind stays `url`. A Task ID is not a hyperlink, so a task
 # reference is never a LINK().
@@ -922,8 +942,10 @@ title = "Relations"
 type = "mkio-table"
 service = "all_relations"
 protocol = "query"
-columns = ["forward", "backward", "notes"]
-labels = { forward = "This task …", backward = "… that task", notes = "Notes" }
+columns = ["forward", "backward", "notes", "created_at", "updated_at", "relation_id"]
+visible = ["forward", "backward", "notes"]
+labels = { forward = "This task …", backward = "… that task", notes = "Notes", created_at = "Created", updated_at = "Updated", relation_id = "Relation ID" }
+types = { created_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" }, updated_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" } }
 sort = ["forward"]
 
 [[panes.relations.buttons]]
@@ -1034,8 +1056,9 @@ title = "Activity"
 type = "mkio-table"
 service = "task_activity"
 protocol = "query"
-columns = ["at", "action", "detail", "task_id", "actor"]
-labels = { at = "When", action = "Action", detail = "Detail", task_id = "Task ID", actor = "By" }
+columns = ["at", "action", "detail", "task_id", "actor", "ref_id", "event_id"]
+visible = ["at", "action", "detail", "task_id", "actor"]
+labels = { at = "When", action = "Action", detail = "Detail", task_id = "Task ID", actor = "By", ref_id = "Ref ID", event_id = "Event ID" }
 sort = ["-event_id"]
 link = { listen = { task_id = "task_id" }, chips = false }
 
@@ -1048,8 +1071,10 @@ title = "Assignees"
 type = "mkio-table"
 service = "all_assignees"
 protocol = "query"
-columns = ["name", "notes"]
-labels = { name = "Name", notes = "Notes" }
+columns = ["name", "notes", "created_at", "updated_at", "assignee_id"]
+visible = ["name", "notes"]
+labels = { name = "Name", notes = "Notes", created_at = "Created", updated_at = "Updated", assignee_id = "Assignee ID" }
+types = { created_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" }, updated_at = { type = "time", parse = "%Y-%m-%d %H:%M:%S" } }
 sort = ["name"]
 
 [[panes.assignees.buttons]]

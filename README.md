@@ -20,7 +20,11 @@ by score. It opens on the top level, every subtree folded behind its caret;
 click one to unfold a task's children (shift-click for the whole subtree;
 the header caret does every root, shift-clicked every level, and shift-clicked
 again folds the lot), and a task split under a folded parent
-waits behind that caret. Completing a task completes
+waits behind that caret. Every pane's Columns button (top right of the
+header) offers every column its table has beyond the ones it opens on — the
+internal ids, when a task was last updated or completed, a reference's target
+and file type, and the Parent each task was split from, which is what a
+flattened tree needs to say what belongs to what. Completing a task completes
 everything split from it; reopening a child reopens its ancestors; deleting a
 task deletes its whole subtree — permanently, and it is the one thing here
 that cannot be undone.
@@ -295,6 +299,11 @@ copy needs attention: add
 to a copied `mktask.toml`, and put the UI config in a `config/` directory
 beside it. An `app.json` you edited can move there as it is — it is served
 unchanged when no `app.toml` sits next to it.
+
+0.20.0 changes no schema: every pane's Columns picker now offers every column
+its table has (Parent, Updated, Completed, a reference's Target and Type, the
+internal ids), each off until you tick it, and a task's History diffs its
+Assigned To. A saved layout keeps the columns it saved.
 
 ## Development
 
