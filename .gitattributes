@@ -4,3 +4,5 @@
 * text=auto eol=lf
 *.db binary
 *.png binary
+# Built by editor/ (npm run build); a diff of it says nothing.
+mktask/static/vendor/tiptap.js -diff linguist-generated

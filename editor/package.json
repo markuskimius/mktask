@@ -1,0 +1,19 @@
+{
+  "name": "mktask-editor",
+  "private": true,
+  "description": "Builds mktask/static/vendor/tiptap.js. npm is needed only to build; mktask runs without it.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@tiptap/core": "3.31.4",
+    "@tiptap/extension-paragraph": "3.31.4",
+    "@tiptap/extension-placeholder": "3.31.4",
+    "@tiptap/markdown": "3.31.4",
+    "@tiptap/pm": "3.31.4",
+    "@tiptap/starter-kit": "3.31.4",
+    "esbuild": "0.28.2"
+  }
+}
