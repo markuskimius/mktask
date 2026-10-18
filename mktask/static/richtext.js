@@ -17,9 +17,13 @@
 // formatted one in the Edit dialogs: the textarea's text, computed into a
 // literal editor.
 //
+// `mountRichText` is the editor itself — the toolbar, the link box, the
+// text — for anything else that edits in place: the Text pane (textpane.js)
+// puts the same editor where a note was being read.
+//
 // Also the one place the rest of the app gets Markdown rendering from
-// (`renderMarkdown`), so the Detail pane and the Reader show a note through
-// the same schema the editor wrote it with.
+// (`renderMarkdown`), so the Detail pane and the Text pane show a note
+// through the same schema the editor wrote it with.
 
 import { registerFieldType } from "/mkui/src/index.js";
 import { icon } from "/mkui/src/lib/icons.js";
@@ -85,7 +89,14 @@ function literalDoc(text) {
   };
 }
 
-registerFieldType("richtext", (field, ctx) => {
+/** The editor and its toolbar, mounted in a new element (`.el`).
+ *
+ *  `literal` reads a set value as plain text; `barAt: "bottom"` puts the
+ *  toolbar under the text instead of over it; `extra` is appended to the
+ *  toolbar's end (a Save button). `onChange(markdown)` runs on every edit.
+ *  `set` keeps the value as given until an edit, so `get` answers exactly
+ *  what was set while nothing has been typed. */
+export function mountRichText({ literal = false, placeholder = "", rows = 0, barAt = "top", extra = [], onChange } = {}) {
   const root = el("div", "richtext");
   const bar = el("div", "richtext-bar");
   bar.setAttribute("role", "toolbar");
@@ -100,8 +111,9 @@ registerFieldType("richtext", (field, ctx) => {
   linkApply.type = linkRemove.type = "button";
   linkRow.append(linkInput, linkApply, linkRemove);
   const body = el("div", "richtext-body");
-  if (field.rows) body.style.setProperty("--richtext-rows", String(field.rows));
-  root.append(bar, linkRow, body);
+  if (rows) body.style.setProperty("--richtext-rows", String(rows));
+  if (barAt === "bottom") root.append(body, linkRow, bar);
+  else root.append(bar, linkRow, body);
 
   let value = "";            // what get() answers: as set, until an edit
   let given = "";            // what was last set, until an edit (null after)
@@ -109,8 +121,8 @@ registerFieldType("richtext", (field, ctx) => {
 
   const editor = T.createEditor({
     element: body,
-    placeholder: ctx.placeholder,
-    onChange: (md) => { value = md; given = null; ctx.changed(); },
+    placeholder,
+    onChange: (md) => { value = md; given = null; onChange?.(md); },
     onSelection: () => paint(),
   });
 
@@ -139,8 +151,15 @@ registerFieldType("richtext", (field, ctx) => {
     bar.appendChild(b);
     if (active) buttons.push([b, active]);
   }
+  // `extra` is one group at the bar's right end, so a bar that wraps keeps
+  // it in the corner rather than wherever the tools ran out.
+  if (extra.length) {
+    const end = el("span", "richtext-end");
+    end.append(...extra);
+    bar.appendChild(end);
+  }
 
-  // The link box: under the toolbar rather than a prompt, which would block
+  // The link box: beside the toolbar rather than a prompt, which would block
   // the page. Enter applies, Escape goes back to the text without closing
   // the dialog.
   function openLink() {
@@ -178,12 +197,9 @@ registerFieldType("richtext", (field, ctx) => {
     }
   });
 
-  const grown = new ResizeObserver(() => ctx.resized());
-  grown.observe(root);
-
-  // The dialog re-applies `disabled` on every pass, so only a real change
+  // A dialog re-applies `disabled` on every pass, so only a real change
   // touches the editor, and that without an update event: an update is an
-  // edit to the dialog, which would run the pass again.
+  // edit, which would run the pass again.
   let enabled = true;
   const setEnabled = (on) => {
     if (on === enabled) return;
@@ -197,6 +213,7 @@ registerFieldType("richtext", (field, ctx) => {
   paint();
   return {
     el: root,
+    editor,
     get: () => value,
     set(v) {
       // The same value again is no change: a compute re-run until it
@@ -205,7 +222,7 @@ registerFieldType("richtext", (field, ctx) => {
       const next = v == null ? "" : String(v);
       if (next === given) return;
       given = next;
-      if (field.literal) {
+      if (literal) {
         editor.commands.setContent(literalDoc(next), { emitUpdate: false });
         value = T.toMarkdown(editor);
       } else {
@@ -214,10 +231,30 @@ registerFieldType("richtext", (field, ctx) => {
       }
       paint();
     },
-    focus: () => editor.commands.focus("end"),
-    setDisabled: (b) => setEnabled(!b),
-    setReadOnly: (b) => setEnabled(!b),
-    destroy() { grown.disconnect(); editor.destroy(); },
+    /** Put the cursor at a document position, else at the end. */
+    focus: (pos) => editor.commands.focus(pos ?? "end"),
+    setEnabled,
+    destroy: () => editor.destroy(),
+  };
+}
+
+registerFieldType("richtext", (field, ctx) => {
+  const rt = mountRichText({
+    literal: !!field.literal,
+    placeholder: ctx.placeholder,
+    rows: field.rows,
+    onChange: () => ctx.changed(),
+  });
+  const grown = new ResizeObserver(() => ctx.resized());
+  grown.observe(rt.el);
+  return {
+    el: rt.el,
+    get: rt.get,
+    set: rt.set,
+    focus: () => rt.focus(),
+    setDisabled: (b) => rt.setEnabled(!b),
+    setReadOnly: (b) => rt.setEnabled(!b),
+    destroy() { grown.disconnect(); rt.destroy(); },
     keepsEnter: true,
   };
 });

@@ -276,7 +276,7 @@
   font-size: 0.9em;
   padding: 0 0.25em;
   border-radius: 3px;
-  background: rgba(128, 128, 128, 0.18);  /* reads on any box: the body, the notes, the Reader */
+  background: rgba(128, 128, 128, 0.18);  /* reads on any box: the body, the notes, the Text pane */
 }
 
 .task-refs-md pre {
@@ -284,7 +284,7 @@
   overflow: auto;
   white-space: pre;
   border-radius: 3px;
-  background: rgba(128, 128, 128, 0.18);  /* reads on any box: the body, the notes, the Reader */
+  background: rgba(128, 128, 128, 0.18);  /* reads on any box: the body, the notes, the Text pane */
 }
 
 .task-refs-md pre code {
@@ -379,63 +379,106 @@
   border-radius: 3px;
 }
 
-/* The Reader pane: the ref-reader widget (static/reader.js) is the whole
-   body — the last task or reference picked, full height, scrolling as one. */
-.reader-body {
-  display: block;
+/* The Text pane: the text-pane widget (static/textpane.js) is the whole
+   body and fills it — the text scrolls inside it, so the editing bar
+   under the text takes a row of its own and never covers a word. The view
+   and the editor lay the text out alike (padding, size, line height), so
+   a click lands on the character it was on. */
+.textpane-body {
+  height: 100%;
 }
 
-.reader {
+.textpane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.5;
+}
+
+.textpane-view,
+.textpane-editor .richtext-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 0.6em 0.9em 0.9em;
 }
 
-.reader-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5em;
-  font-weight: bold;
-  overflow-wrap: anywhere;
-}
+.textpane-view { cursor: text; }
 
-.reader-title {
-  font-size: 1.05em;
-}
-
-.reader-id {
-  font-family: var(--mkui-font-mono, monospace);
-  font-weight: normal;
-  color: var(--mkui-fg-mute, #858585);
-}
-
-.reader-sub {
-  margin: 0.2em 0 0.6em;
-  font-size: 0.8em;
-  color: var(--mkui-fg-mute, #858585);
-}
-
-.reader-text {
+.textpane-text {
   margin: 0;
   overflow-wrap: anywhere;
 }
 
-pre.reader-text {
+pre.textpane-text {
   white-space: pre-wrap;
   font: inherit;
 }
 
-.reader-empty {
+.textpane-empty {
   color: var(--mkui-fg-mute, #858585);
 }
 
-.reader-link {
-  overflow-wrap: anywhere;
-}
-
-.reader-image {
+.textpane-image {
   display: block;
   max-width: 100%;
   border-radius: 3px;
 }
+
+.richtext.textpane-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+.textpane .textpane-editor .ProseMirror {
+  min-height: 100%;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.textpane-editor .richtext-bar {
+  flex: none;
+  border-bottom: none;
+  border-top: 1px solid var(--mkui-border);
+  padding: 3px 4px;
+  background: var(--mkui-bg-alt);
+}
+
+.textpane-editor .richtext-link {
+  flex: none;
+  border-bottom: none;
+  border-top: 1px solid var(--mkui-border);
+}
+
+.textpane-editor .richtext-link-input { flex: 1; padding: 3px 6px; }
+
+.richtext-end {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.textpane-status {
+  margin: 0 6px;
+  font-size: 0.85em;
+  color: var(--mkui-fg-mute, #858585);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.textpane-status.textpane-warn { color: #e0a030; }
 
 /* The `richtext` dialog field (richtext.js): a toolbar over the editor,
    boxed like mkui's own inputs. The text inside is styled as a rendered

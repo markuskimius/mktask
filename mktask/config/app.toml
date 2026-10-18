@@ -34,7 +34,7 @@ heading = "mktask${IF(state.mkio.server.version, CONCAT(' ', state.mkio.server.v
 
 # Declared so the panes that publish a selection have somewhere to put it.
 # "" is nothing selected. `detail_ref` is the reference under the Detail
-# pane's cursor, published by refs.js for the Reader.
+# pane's cursor, published by refs.js for the Text pane.
 [state]
 status = { message = "Connecting...", background = "#858585", color = "#000" }
 selected_task = ""
@@ -48,7 +48,7 @@ label = "Tasks"
 items = [
   { label = "Tasks", action = "pane.show", args = "tasks" },
   { label = "Detail", action = "pane.show", args = "task-detail" },
-  { label = "Reader", action = "pane.show", args = "reader" },
+  { label = "Text", action = "pane.show", args = "text" },
   { label = "References", action = "pane.show", args = "references" },
   { label = "Activity", action = "pane.show", args = "activity" },
 ]
@@ -680,17 +680,20 @@ editTask = { pane = "tasks", button = "Edit" }
 editRef = { pane = "references", button = "Edit" }
 deleteRef = { pane = "references", button = "Delete" }
 
-# ─── panes.reader ──────────────────────────────────────────────────────
+# ─── panes.text ────────────────────────────────────────────────────────
 
-# One widget (static/reader.js): the last thing picked, full height — a
-# reference picked in the References or Detail pane, or the selected task's
-# notes when a task was picked last. Markdown is rendered. Read-only.
-[panes.reader]
-title = "Reader"
+# One widget (static/textpane.js): the text of the last thing picked, and
+# nothing else, full height — a snippet picked in the References or Detail
+# pane, or the selected task's notes when a task was picked last (an image
+# shows as itself; a link, a file or a task reference, as nothing). Markdown
+# is rendered. A click edits the text in place; Save writes it formatted
+# (`edit_notes`, `edit_snippet`).
+[panes.text]
+title = "Text"
 
-[[panes.reader.widgets]]
-type = "ref-reader"
-class = "reader-body"
+[[panes.text.widgets]]
+type = "text-pane"
+class = "textpane-body"
 
 # ─── panes.references ──────────────────────────────────────────────────
 
@@ -1242,7 +1245,7 @@ submit = { label = "Delete", service = "tasks", op = "delete_assignee" }
 
 # ─── frames ────────────────────────────────────────────────────────────
 
-# Default layout: Tasks over References on the left, Detail over Reader on
+# Default layout: Tasks over References on the left, Detail over Text on
 # the right.
 [[frames]]
 id = "main"
@@ -1273,7 +1276,7 @@ dir = "v"
 ratios = [0.55, 0.45]
 children = [
   { type = "tabs", active = 0, children = ["task-detail"] },
-  { type = "tabs", active = 0, children = ["reader"] },
+  { type = "tabs", active = 0, children = ["text"] },
 ]
 
 # ─── mkio ──────────────────────────────────────────────────────────────

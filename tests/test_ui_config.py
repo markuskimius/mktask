@@ -1081,31 +1081,53 @@ def test_field_types_are_built_in_or_registered(app_config):
     assert "innerHTML" not in js, "the field builds nodes; it never parses HTML"
 
 
-def test_the_reader_follows_the_last_pick(app_config):
-    """The Reader pane is one ref-reader widget (static/reader.js), in the
+def test_the_text_pane_follows_the_last_pick(app_config):
+    """The Text pane is one text-pane widget (static/textpane.js), in the
     default frames and on the Tasks menu. It follows the three published
     selections — the task, the References pane's reference, and the Detail
     pane's cursor, which refs.js publishes as `detail_ref` — renders Markdown
-    with the same module, and every class it paints with has a rule."""
-    pane = app_config["panes"]["reader"]
-    assert [w["type"] for w in pane["widgets"]] == ["ref-reader"]
+    with the editor's module, and every class it paints with has a rule."""
+    pane = app_config["panes"]["text"]
+    assert pane["title"] == "Text"
+    assert [w["type"] for w in pane["widgets"]] == ["text-pane"]
     frames = json.dumps(app_config["frames"])
-    assert '"reader"' in frames, "the Reader is in the default layout"
+    assert '"text"' in frames, "the Text pane is in the default layout"
     tasks_menu = next(m for m in app_config["menubar"] if m["label"] == "Tasks")
-    assert {"label": "Reader", "action": "pane.show", "args": "reader"} in tasks_menu["items"]
-    js = (STATIC / "reader.js").read_text(encoding="utf-8")
+    assert {"label": "Text", "action": "pane.show", "args": "text"} in tasks_menu["items"]
+    assert not (STATIC / "reader.js").exists(), "the Reader is the Text pane now"
+    js = (STATIC / "textpane.js").read_text(encoding="utf-8")
     refs = (STATIC / "refs.js").read_text(encoding="utf-8")
     css = (STATIC / "mktask.css").read_text(encoding="utf-8")
     assert 'const SOURCES = ["selected_task", "selected_ref", "detail_ref"];' in js
     for root in ("selected_task", "selected_ref", "detail_ref"):
         assert root in app_config["state"], f"state.{root} is not declared"
     assert 'app.state.set("detail_ref", ref)' in refs, "refs.js publishes its cursor"
-    assert 'import { renderMarkdown } from "/static/richtext.js";' in js
-    assert "innerHTML" not in js, "the Reader builds nodes; it never parses HTML"
-    assert 'registerWidget("ref-reader"' in js
-    for cls in set(re.findall(r'"(reader(?:-[a-z]+)*)', js)):
+    assert 'import { renderMarkdown, mountRichText } from "/static/richtext.js";' in js
+    assert "export function mountRichText(" in (STATIC / "richtext.js").read_text(encoding="utf-8")
+    assert "innerHTML" not in js, "the Text pane builds nodes; it never parses HTML"
+    assert 'registerWidget("text-pane"' in js
+    for cls in set(re.findall(r'"(textpane(?:-[a-z]+)*)', js)) | set(re.findall(r' (textpane-[a-z]+)"', js)):
         assert f".{cls}" in css, f"class {cls} has no CSS rule"
-    assert "reader-body" == pane["widgets"][0]["class"] and ".reader-body" in css
+    assert "textpane-body" == pane["widgets"][0]["class"] and ".textpane-body" in css
+
+
+def test_the_text_pane_saves_the_text_alone(server_config):
+    """A save from the Text pane is `edit_notes` or `edit_snippet`, both
+    declared, and each writes nothing the pane does not show: `edit` would
+    send every field back as the pane last saw it."""
+    js = (STATIC / "textpane.js").read_text(encoding="utf-8")
+    ops = server_config["services"]["tasks"]["ops"]
+    assert set(re.findall(r'"(edit_[a-z]+)"', js)) == {"edit_notes", "edit_snippet"}
+    from mktask.services import TaskTransactions
+    assert "edit_notes" in TaskTransactions.TREE_OPS
+    # edit_snippet has no steps of its own: it writes through edit_ref's.
+    assert "edit_snippet" in TaskTransactions.REF_OPS and "edit_snippet" not in ops
+    assert ops["edit_notes"][0]["fields"] == ["notes", "notes_format", "updated_at", "last_event"]
+    assert 'client.send("tasks", data, { op })' in js
+    for name in ("task_id", "notes", "notes_format", "updated_at"):
+        assert f"{name}:" in js.split('"edit_notes"')[1].split("]")[0], name
+    for name in ("ref_id", "body", "format", "updated_at"):
+        assert f"{name}:" in js.split('"edit_snippet"')[1].split("]")[0], name
 
 
 def test_detail_opens_every_snippet(app_config):

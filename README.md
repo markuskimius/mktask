@@ -98,10 +98,14 @@ shows its notes and every snippet, formatted, with nothing more to click.
 Click a snippet to fold it; *Fold all* on the Snippets heading folds every
 one, and the browser remembers which you prefer.
 
-**The Reader** (under Detail; *Tasks › Reader* reopens it) shows the last
-thing you picked, full height: a reference picked in the References or
-Detail pane — a snippet formatted, an image full width, a file or link to
-open — or, when you picked a task, its notes. It follows edits live.
+**The Text pane** (under Detail; *Tasks › Text* reopens it) shows the text
+of the last thing you picked, full height, and nothing else: a task's notes,
+or a snippet picked in the References or Detail pane (an image shows as
+itself). **Click the text to edit it right there**: the formatting tools,
+*Cancel* and *Save* appear in a bar under the text, never over it. The edit
+stays open until you press *Save* (⌘/Ctrl+Enter) or *Cancel* (Esc), even if
+you pick something else meanwhile. A plain note is saved formatted, and one
+save is one step for *Undo*.
 
 **The Detail pane edits what it shows.** It has its own toolbar — *Add Link*,
 *Add Text*, and *Reference Task* are the References pane's add buttons — and one

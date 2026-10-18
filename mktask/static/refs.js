@@ -43,7 +43,7 @@
 // plain text is shown exactly as written.
 //
 // The reference under the cursor is published as `state.detail_ref`, which
-// the Reader pane (reader.js) follows alongside the References pane's own.
+// the Text pane (textpane.js) follows alongside the References pane's own.
 //
 // "Go to" on a task reference selects the related task in the Tasks pane
 // (`table.select`, mkui ≥ 0.2.23). Selecting it there is the whole job:
@@ -598,7 +598,7 @@ registerWidget("task-refs", (spec, app, host) => {
     render();
   };
 
-  // The reference under the cursor, for the Reader. Deduped like mkui's own
+  // The reference under the cursor, for the Text pane. Deduped like mkui's own
   // publishRow: a new row object (a live update) is a change, the same one is not.
   let publishedRef = null;
   const publishCursor = () => {

@@ -125,6 +125,11 @@ split = [
 edit = [
     { table = "tasks", op_type = "update", key = ["task_id"], fields = ["title", "notes", "notes_format", "importance", "urgency", "due", "assigned_to", "updated_at", "last_event"], defaults = { last_event = "" } },
 ]
+# The Text pane saves a task's notes and nothing else: `edit` takes every
+# field, which would write back whatever the pane last saw of the others.
+edit_notes = [
+    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["notes", "notes_format", "updated_at", "last_event"], defaults = { last_event = "" } },
+]
 move = [
     { table = "tasks", op_type = "update", key = ["task_id"], fields = ["parent_task_id", "updated_at", "last_event"], defaults = { last_event = "" } },
 ]

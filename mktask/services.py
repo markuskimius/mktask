@@ -212,8 +212,8 @@ class TaskTransactions(TransactionService):
 
     NEW_OPS = ("add", "split")
     CASCADE_OPS = ("complete", "reopen", "delete")
-    TREE_OPS = ("edit", "move")
-    REF_OPS = ("add_ref", "edit_ref", "delete_ref")
+    TREE_OPS = ("edit", "edit_notes", "move")
+    REF_OPS = ("add_ref", "edit_ref", "edit_snippet", "delete_ref")
     RELATION_OPS = ("add_relation", "edit_relation", "delete_relation")
     ASSIGNEE_OPS = ("add_assignee", "edit_assignee", "delete_assignee")
     STEP_OPS = ("undo_action", "redo_action")
@@ -509,6 +509,18 @@ class TaskTransactions(TransactionService):
         e_ops, e_params = self._event_steps([event])
         return await self.writer.submit(
             tuple(ops) + e_ops, tuple(params) + e_params, data, ref=ref
+        )
+
+    async def _op_edit_notes(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        """A task's notes and their format, nothing else (the Text pane's save)."""
+        was = await self._task(data["task_id"])
+        if was is None:
+            raise ValueError(f"No task {data['task_id']!r}")
+        data = _with_notes_format({**data, "notes": str(data["notes"] or "")}, was["notes_format"] or "plain")
+        event = self._event(data["task_id"], "edited", was["title"])
+        return await self._submit(
+            "edit_notes", [{**data, "last_event": event["last_event"]}], data, ref,
+            events=[event], wrote={data["task_id"]},
         )
 
     async def _relabel_steps(self, task_id: str, title: str) -> tuple[tuple, tuple]:
@@ -898,6 +910,27 @@ class TaskTransactions(TransactionService):
             "edit_ref", [{**data, "href": href, "body": body, "format": fmt, "label": label, "relation": ""}],
             data, ref,
             events=[self._event(row["task_id"], "ref_edited", label, row["ref_id"], kind=row["kind"])],
+        )
+
+    async def _op_edit_snippet(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        """A snippet's text and format, nothing else (the Text pane's save).
+        The label is kept, unless it is still the one the old text gave it:
+        then it follows the new first line."""
+        row = await self._ref(data["ref_id"])
+        if row is None:
+            raise ValueError(f"No reference {data['ref_id']!r}")
+        if row["kind"] != "text":
+            raise ValueError("Only a snippet's text can be edited here")
+        body = str(data["body"] or "")
+        fmt = _format_of("text", data, row.get("format") or "plain")
+        label = row["label"]
+        if label == default_label("text", "", row["body"], row.get("format") or "plain"):
+            label = default_label("text", "", body, fmt) or label
+        return await self._submit(
+            "edit_ref", [{"ref_id": row["ref_id"], "label": label, "href": "", "body": body, "format": fmt,
+                          "relation": "", "updated_at": data.get("updated_at", row["updated_at"])}],
+            data, ref,
+            events=[self._event(row["task_id"], "ref_edited", label, row["ref_id"], kind="text")],
         )
 
     async def _op_delete_ref(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:

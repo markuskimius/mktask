@@ -964,6 +964,69 @@ class TestNotesFormat:
                 assert (back["notes"], back["notes_format"]) == ("**as typed**", "plain"), "undo steps it back"
 
 
+class TestTextPaneSaves:
+    """`edit_notes` and `edit_snippet`: the Text pane saves the text and its
+    format, and nothing it did not show — no title, no importance, no label."""
+
+    async def test_edit_notes_writes_the_notes_alone(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await _txn(ws, "add", {"title": "Notes only", "notes": "Call *Bob*", "importance": 5}, "tp1")
+                task = (await _snapshot(ws, "tp-a"))["Notes only"]["task_id"]
+                await _txn(ws, "edit_notes", {"task_id": task, "notes": "Call \\*Bob\\* **now**",
+                                              "notes_format": "markdown", "updated_at": NOW}, "tp2")
+                row = (await _snapshot(ws, "tp-b"))["Notes only"]
+                assert (row["notes"], row["notes_format"]) == ("Call \\*Bob\\* **now**", "markdown")
+                assert (row["title"], row["importance"]) == ("Notes only", 5), "nothing else is written"
+                assert row["last_event"] == "Edited"
+                assert row["_mkio_version"] == 2, "one save, one version"
+
+                await _txn(ws, "edit_notes", {"task_id": task, "notes": "again", "updated_at": NOW}, "tp3")
+                assert (await _snapshot(ws, "tp-c"))["Notes only"]["notes_format"] == "markdown", \
+                    "a save that names no format keeps the task's own"
+                r = await _txn(ws, "edit_notes", {"task_id": task, "notes": "x", "notes_format": "rtf",
+                                                  "updated_at": NOW}, "tp4", expect="error")
+                assert r["message"] == "Unknown format 'rtf'"
+                r = await _txn(ws, "edit_notes", {"task_id": "TKZZ99999999", "notes": "x", "updated_at": NOW},
+                               "tp5", expect="error")
+                assert r["message"] == "No task 'TKZZ99999999'"
+
+                await _undo(ws, {"task_id": task}, "tp6")
+                await _undo(ws, {"task_id": task}, "tp7")
+                back = (await _snapshot(ws, "tp-d"))["Notes only"]
+                assert (back["notes"], back["notes_format"]) == ("Call *Bob*", "plain"), "undo steps it back"
+
+    async def test_edit_snippet_keeps_a_typed_label(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Snippet saves", "ts1")
+                await _add_ref(ws, task, "ts2", kind="text", body="First line\nmore")
+                await _add_ref(ws, task, "ts3", kind="text", body="Typed one", label="My label")
+                await _add_ref(ws, task, "ts4", kind="url", href="https://a")
+                await asyncio.sleep(0.2)
+                rows = {r["label"]: r for r in await _refs(ws, task)}
+                auto, typed, url = (rows[k]["ref_id"] for k in ("First line", "My label", "https://a"))
+
+                await _txn(ws, "edit_snippet", {"ref_id": auto, "body": "**New** first\n\nmore",
+                                                "format": "markdown", "updated_at": NOW}, "ts5")
+                await _txn(ws, "edit_snippet", {"ref_id": typed, "body": "Changed", "updated_at": NOW}, "ts6")
+                r = await _txn(ws, "edit_snippet", {"ref_id": url, "body": "x", "updated_at": NOW},
+                               "ts7", expect="error")
+                assert r["message"] == "Only a snippet's text can be edited here"
+                await asyncio.sleep(0.2)
+                after = {r["ref_id"]: r for r in await _refs(ws, task)}
+                assert (after[auto]["body"], after[auto]["format"]) == ("**New** first\n\nmore", "markdown")
+                assert after[auto]["label"] == "New first", "an automatic label follows the first line"
+                assert (after[typed]["body"], after[typed]["label"]) == ("Changed", "My label"), \
+                    "a typed label is kept"
+                assert after[typed]["format"] == "plain", "a save that names no format keeps the snippet's own"
+
+                await _undo(ws, {"ref_id": typed}, "ts8")
+                await asyncio.sleep(0.2)
+                back = {r["ref_id"]: r for r in await _refs(ws, task)}[typed]
+                assert (back["body"], back["label"]) == ("Typed one", "My label"), "undo steps it back"
+
+
 class TestSubtreeReferences:
     """What the Detail pane's own queries need from the server: a filter that
     names a whole subtree, and the parent/child fields the subtree is computed
