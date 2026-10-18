@@ -993,45 +993,89 @@ def _reference_dialogs(app_config):
             for kind, label in (("url", "Add Link"), ("text", "Add Text"), ("task", "Reference Task"))}
 
 
-def test_a_snippet_picks_its_format(app_config):
-    """Add Text and the References pane's Edit carry a Format select whose
-    values are exactly REF_FORMATS; Add opens on Markdown, Edit on the row's
-    own, and the syntax line shows only for Markdown. Add Text leaves a
-    Markdown label blank for the server, which strips the markers."""
+def test_a_snippet_is_written_formatted(app_config):
+    """Add Text writes in the editor and sends Markdown, its format hidden
+    and fixed, with no syntax line and no label compute (the server strips
+    the markers for the label). The References pane's Edit opens a Markdown
+    snippet in the editor and a plain one as written, with Format to make it
+    a formatted one through the literal editor; the hidden `body` sends
+    whichever is showing."""
     from mktask.services import REF_FORMATS
     refs = app_config["panes"]["references"]
     add = _reference_dialogs(app_config)["text"]
     edit = next(b for b in refs["buttons"] if b["label"] == "Edit")["action"]["dialog"]
-    for dialog, value in ((add, "markdown"), (edit, "${row.format}")):
-        fmt = _fields(dialog)["format"]
-        assert fmt["type"] == "select" and fmt["required"] is True and fmt["value"] == value
-        assert [o["value"] for o in fmt["options"]] == ["markdown", "plain"]
-        assert set(o["value"] for o in fmt["options"]) == set(REF_FORMATS)
-        hint = [x for x in dialog["fields"] if x.get("type") == "readonly" and x.get("label") == "Syntax"]
-        assert len(hint) == 1 and "format == 'markdown'" in hint[0]["showWhen"], "the syntax line, Markdown only"
-    assert _fields(edit)["format"]["showWhen"] == "row.kind == 'text'"
-    assert _fields(add)["label"]["compute"].startswith("IF(format == 'markdown', '',")
+    for dialog in (add, edit):
+        assert not [x for x in _walk(dialog["fields"]) if x.get("label") == "Syntax"], "the editor shows the formatting"
+    f = _fields(add)
+    assert f["body"]["type"] == "richtext" and f["body"]["required"] is True
+    assert f["format"] == {"name": "format", "type": "hidden", "value": "markdown"}
+    assert "compute" not in f["label"], "a Markdown label is the server's to fill"
+    f = _fields(edit)
+    assert f["_body_md"]["type"] == "richtext" and f["_body_md"]["value"] == "${row.body}"
+    assert f["_body_plain"]["type"] == "textarea" and f["_body_plain"]["value"] == "${row.body}"
+    assert f["_body_converted"]["type"] == "richtext" and f["_body_converted"]["literal"] is True
+    assert f["_body_converted"]["compute"] == "_body_plain"
+    for name in ("_body_md", "_body_plain", "_body_converted"):
+        assert f[name]["required"] is True and f[name]["showWhen"].startswith("row.kind == 'text' && "), name
+    assert f["format"]["value"] == "${row.format}" and f["format"]["showWhen"] == "row.kind == 'text' && row.format != 'markdown'"
+    assert set(o["value"] for o in f["format"]["options"]) == set(REF_FORMATS)
+    assert f["body"]["type"] == "hidden"
+    for name in ("_body_md", "_body_converted", "_body_plain"):
+        assert name in f["body"]["compute"], name
     assert "format" in refs["history"]["columns"], "a format switch shows in a diff"
 
 
-def test_notes_pick_their_format(app_config):
-    """New, Edit and Split carry the notes' Format, as Add Text carries a
-    snippet's: Markdown for a new task, the task's own on Edit, and the
-    Syntax line only for Markdown. A task's History diffs it."""
+def test_notes_are_written_formatted(app_config):
+    """New and Split write the notes in the editor, Markdown fixed and
+    hidden; Edit opens Markdown notes in the editor and plain ones as written,
+    with Format to make them formatted, as the snippet Edit does. A task's
+    History diffs the format."""
     from mktask.services import REF_FORMATS
     tasks = app_config["panes"]["tasks"]
     by_label = {b["label"]: b["action"]["dialog"] for b in tasks["buttons"] if b.get("action", {}).get("type") == "dialog"}
-    for label, value in (("New", "markdown"), ("Edit", "${row.notes_format}"), ("Split", "markdown")):
-        dialog = by_label[label]
-        fmt = _fields(dialog)["notes_format"]
-        assert fmt["type"] == "select" and fmt["required"] is True and fmt["value"] == value, label
-        assert [o["value"] for o in fmt["options"]] == ["markdown", "plain"]
-        assert set(o["value"] for o in fmt["options"]) == set(REF_FORMATS)
-        names = [f.get("name") for f in dialog["fields"]]
-        assert names.index("notes_format") == names.index("notes") + 1, "Format sits under Notes"
-        hint = [f for f in dialog["fields"] if f.get("type") == "readonly" and f.get("label") == "Syntax"]
-        assert len(hint) == 1 and hint[0]["showWhen"] == "notes_format == 'markdown'", label
+    for label in ("New", "Edit", "Split"):
+        assert not [x for x in _walk(by_label[label]["fields"]) if x.get("label") == "Syntax"], label
+    for label in ("New", "Split"):
+        f = _fields(by_label[label])
+        assert f["notes"]["type"] == "richtext" and f["notes"]["value"] == "", label
+        assert f["notes_format"] == {"name": "notes_format", "type": "hidden", "value": "markdown"}, label
+    f = _fields(by_label["Edit"])
+    assert f["_notes_md"]["type"] == "richtext" and f["_notes_md"]["value"] == "${row.notes}"
+    assert f["_notes_md"]["showWhen"] == "row.notes_format == 'markdown'"
+    assert f["_notes_plain"]["type"] == "textarea" and f["_notes_plain"]["value"] == "${row.notes}"
+    assert f["_notes_converted"]["literal"] is True and f["_notes_converted"]["compute"] == "_notes_plain"
+    assert f["notes_format"]["value"] == "${row.notes_format}"
+    assert f["notes_format"]["showWhen"] == "row.notes_format != 'markdown'", "formatted notes stay formatted"
+    assert set(o["value"] for o in f["notes_format"]["options"]) == set(REF_FORMATS)
+    assert f["notes"]["type"] == "hidden"
+    for name in ("_notes_md", "_notes_converted", "_notes_plain"):
+        assert name in f["notes"]["compute"], name
     assert "notes_format" in tasks["history"]["columns"]
+
+
+def test_field_types_are_built_in_or_registered(app_config):
+    """Every dialog field `type` is one mkui builds or one a module
+    index.html imports registers — mkui shows an unknown one as a text box,
+    with only a console warning. `richtext` reads the TipTap bundle, which is
+    committed with its licenses beside it."""
+    import mkui
+
+    builtin = (Path(mkui.static_dir) / "src" / "lib" / "dialogs.js").read_text(encoding="utf-8")
+    m = re.search(r"FIELD_TYPES = Object\.freeze\(\[(.*?)\]\)", builtin, re.S)
+    assert m, "mkui has no FIELD_TYPES: the registry needs mkui 1.35.0"
+    known = set(re.findall(r'"([a-z]+)"', m.group(1)))
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    for path in re.findall(r'import\s*"/static/([^"]+)"', html):
+        known |= set(re.findall(r'registerFieldType\("([a-z-]+)"', (STATIC / path).read_text(encoding="utf-8")))
+    assert "richtext" in known
+    used = {f["type"] for d in _dialogs(app_config) for f in _walk(d.get("fields", [])) if "type" in f}
+    assert "richtext" in used and used <= known, used - known
+    js = (STATIC / "richtext.js").read_text(encoding="utf-8")
+    assert 'from "/static/vendor/tiptap.js"' in js
+    assert (STATIC / "vendor" / "tiptap.js").is_file()
+    licenses = (STATIC / "vendor" / "tiptap.js.LICENSES.txt").read_text(encoding="utf-8")
+    assert "@tiptap/core" in licenses and "prosemirror-model" in licenses
+    assert "innerHTML" not in js, "the field builds nodes; it never parses HTML"
 
 
 def test_the_reader_follows_the_last_pick(app_config):
@@ -1101,7 +1145,6 @@ def test_one_reference_dialog_per_kind_on_the_references_pane(app_config, server
     assert f["label"]["compute"] == "_url", "a live suggestion"
     f = _fields(dialogs["text"])
     assert f["body"]["required"] is True and "href" not in f, "a snippet has no href (the op's default)"
-    assert "compute" in f["label"], "a live suggestion from the first line"
     f = _fields(dialogs["task"])
     assert f["href"] == {"name": "href", "type": "hidden", "compute": "_task"}
     assert "label" not in f, "the server labels a task reference by the related task's title"
@@ -1194,7 +1237,7 @@ def test_one_edit_dialog_for_every_kind(app_config):
     assert f["relation"]["optionsFrom"]["service"] == "relation_options"
     assert f["label"]["showWhen"] == "row.kind != 'task'", "a task reference's label follows the related task"
     assert f["href"]["showWhen"] == "row.kind == 'url'"
-    assert f["body"]["showWhen"] == "row.kind == 'text'"
+    assert f["body"]["type"] == "hidden" and "row.kind != 'text'" in f["body"]["compute"], "only a snippet sends a body"
     linked = next(x for x in _walk(dialog["fields"]) if x.get("label") == "Related task")
     assert linked["type"] == "readonly" and linked["showWhen"] == "row.kind == 'task'" and "name" not in linked
     delete = _dialog_by_op(app_config, "references", "delete_ref")

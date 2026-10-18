@@ -47,7 +47,6 @@ export function extensions({ placeholder = "" } = {}) {
       link: {
         openOnClick: false,              // a click in the editor places the cursor
         autolink: true,
-        protocols: SAFE_PROTOCOLS.filter((p) => !["http", "https", "mailto", "ftp"].includes(p)),
         isAllowedUri: (url) => allowed(url),
         HTMLAttributes: { target: "_blank", rel: "noopener noreferrer" },
       },
@@ -84,9 +83,11 @@ export function createEditor({ element, markdown = "", placeholder = "", editabl
   });
 }
 
-/** The editor's content as Markdown, `""` when there is nothing in it. */
+/** The editor's content as Markdown, `""` when there is nothing in it.
+ *  Trailing whitespace goes: the empty line an editor keeps after a list
+ *  and a line break with nothing after it say nothing. */
 export function toMarkdown(editor) {
-  return editor.isEmpty ? "" : editor.getMarkdown().replace(/\n+$/, "");
+  return editor.isEmpty ? "" : editor.getMarkdown().replace(/\s+$/, "");
 }
 
 /** Markdown → TipTap JSON, and back: the round trip the editor makes. */
@@ -103,7 +104,7 @@ function safeLinks(node) {
   return node;
 }
 export function serializeMarkdown(json) {
-  return core().manager.serialize(json).replace(/\n+$/, "");
+  return core().manager.serialize(json).replace(/\s+$/, "");
 }
 
 /** Markdown as a DocumentFragment built by the schema's own serializer:

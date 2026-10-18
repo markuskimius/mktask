@@ -434,3 +434,88 @@ pre.reader-text {
   max-width: 100%;
   border-radius: 3px;
 }
+
+/* The `richtext` dialog field (richtext.js): a toolbar over the editor,
+   boxed like mkui's own inputs. The text inside is styled as a rendered
+   Markdown snippet is, so a note looks the same written and read. */
+.richtext {
+  box-sizing: border-box;
+  background: var(--mkui-bg-alt);
+  border: 1px solid var(--mkui-border);
+  border-radius: 3px;
+}
+
+.richtext:focus-within { border-color: var(--mkui-accent); }
+.mkui-dialog-field.mkui-dialog-invalid .richtext { border-color: #c0392b; }
+.richtext.richtext-off { opacity: 0.6; }
+
+.richtext-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border-bottom: 1px solid var(--mkui-border);
+}
+
+.richtext-tool {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--mkui-fg-mute);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.richtext-tool:hover:not(:disabled) { background: var(--mkui-bg-hover); color: var(--mkui-fg); }
+.richtext-tool[aria-pressed="true"] { background: var(--mkui-bg-hover); color: var(--mkui-accent); }
+.richtext-tool:disabled { cursor: default; }
+.richtext-tool .mkui-icon { width: 14px; height: 14px; vertical-align: middle; }
+.richtext-tool[data-tool="Bold"] { font-weight: 700; }
+.richtext-tool[data-tool="Italic"] { font-style: italic; }
+.richtext-tool[data-tool="Strikethrough"] { text-decoration: line-through; }
+.richtext-tool[data-tool="Code"],
+.richtext-tool[data-tool="Code block"] { font-family: var(--mkui-font-mono, monospace); }
+
+.richtext-gap {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--mkui-border);
+}
+
+.richtext-link {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-bottom: 1px solid var(--mkui-border);
+}
+
+.richtext-link[hidden] { display: none; }
+.mkui-dialog-field .richtext-link .richtext-link-input { flex: 1; width: auto; padding: 3px 6px; }
+.richtext-link-input[aria-invalid="true"] { border-color: #c0392b; }
+
+.richtext .ProseMirror {
+  min-height: calc(var(--richtext-rows, 4) * 1.5em);
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 6px 8px;
+  outline: none;
+  color: var(--mkui-fg);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.richtext .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--mkui-fg-mute);
+  pointer-events: none;
+}

@@ -290,23 +290,14 @@ compute = "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
 [[panes.tasks.buttons.action.dialog.fields]]
 name = "notes"
 label = "Notes"
-type = "textarea"
+type = "richtext"
 rows = 6
 value = ""
 
 [[panes.tasks.buttons.action.dialog.fields]]
 name = "notes_format"
-label = "Format"
-type = "select"
-required = true
+type = "hidden"
 value = "markdown"
-options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
-
-[[panes.tasks.buttons.action.dialog.fields]]
-label = "Syntax"
-type = "readonly"
-value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
-showWhen = "notes_format == 'markdown'"
 
 [[panes.tasks.buttons]]
 label = "Edit"
@@ -400,12 +391,35 @@ name = "assigned_to"
 type = "hidden"
 compute = "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
 
+# Formatted notes open in the editor. Plain ones (written before notes had a
+# format) open as written, with Format to turn them into formatted ones: the
+# literal editor takes the text character for character, so nothing in it
+# is read as formatting. Formatted notes stay formatted. The hidden `notes`
+# is what is sent, from whichever box is showing.
 [[panes.tasks.buttons.action.dialog.fields]]
-name = "notes"
+name = "_notes_md"
+label = "Notes"
+type = "richtext"
+rows = 6
+value = "${row.notes}"
+showWhen = "row.notes_format == 'markdown'"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "_notes_plain"
 label = "Notes"
 type = "textarea"
 rows = 6
 value = "${row.notes}"
+showWhen = "row.notes_format != 'markdown' && notes_format != 'markdown'"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "_notes_converted"
+label = "Notes"
+type = "richtext"
+literal = true
+rows = 6
+compute = "_notes_plain"
+showWhen = "row.notes_format != 'markdown' && notes_format == 'markdown'"
 
 [[panes.tasks.buttons.action.dialog.fields]]
 name = "notes_format"
@@ -413,13 +427,13 @@ label = "Format"
 type = "select"
 required = true
 value = "${row.notes_format}"
-options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
+showWhen = "row.notes_format != 'markdown'"
+options = [{ value = "plain", label = "Plain text" }, { value = "markdown", label = "Formatted" }]
 
 [[panes.tasks.buttons.action.dialog.fields]]
-label = "Syntax"
-type = "readonly"
-value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
-showWhen = "notes_format == 'markdown'"
+name = "notes"
+type = "hidden"
+compute = "IF(row.notes_format == 'markdown', _notes_md, IF(notes_format == 'markdown', _notes_converted, _notes_plain))"
 
 # Wide because mkui clips a dialog's status line to one row, and the server's
 # refusals have to fit. The top level is the `__top__` option, not "": mkui
@@ -563,23 +577,14 @@ compute = "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
 [[panes.tasks.buttons.action.dialog.fields]]
 name = "notes"
 label = "Notes"
-type = "textarea"
+type = "richtext"
 rows = 6
 value = ""
 
 [[panes.tasks.buttons.action.dialog.fields]]
 name = "notes_format"
-label = "Format"
-type = "select"
-required = true
+type = "hidden"
 value = "markdown"
-options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
-
-[[panes.tasks.buttons.action.dialog.fields]]
-label = "Syntax"
-type = "readonly"
-value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
-showWhen = "notes_format == 'markdown'"
 
 [[panes.tasks.buttons]]
 label = "History"
@@ -809,39 +814,27 @@ name = "kind"
 type = "hidden"
 value = "text"
 
+# Formatted text, written in the editor and stored as Markdown. A snippet
+# pasted or dropped in the Detail pane is plain.
 [[panes.references.buttons.action.dialog.fields]]
 name = "body"
 label = "Text"
-type = "textarea"
+type = "richtext"
 rows = 8
 required = true
 placeholder = "Write, or paste the email or conversation here"
 
-# Markdown is rendered in the Detail pane; plain text is shown as written,
-# which is what a pasted email wants. A snippet pasted or dropped in the
-# Detail pane is always plain.
 [[panes.references.buttons.action.dialog.fields]]
 name = "format"
-label = "Format"
-type = "select"
-required = true
+type = "hidden"
 value = "markdown"
-options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
 
-[[panes.references.buttons.action.dialog.fields]]
-label = "Syntax"
-type = "readonly"
-value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
-showWhen = "format == 'markdown'"
-
-# A Markdown first line would carry its markers, and the expression language
-# has no regex replace, so a Markdown label is left blank for the server to
-# fill: default_label takes the first line without them.
+# Left blank, the server fills it: default_label takes the first line
+# without its Markdown markers, which the expression language cannot strip.
 [[panes.references.buttons.action.dialog.fields]]
 name = "label"
 label = "Label"
 type = "text"
-compute = "IF(format == 'markdown', '', FIRST(FILTER(SPLIT(body ?? '', '\\n'), l -> TRIM(l) != '')) ?? '')"
 placeholder = "Blank: the first line of the text"
 
 [panes.references.buttons.action.dialog.submit]
@@ -963,14 +956,35 @@ required = true
 value = "${row.href}"
 showWhen = "row.kind == 'url'"
 
+# As the task Edit dialog's notes: a formatted snippet opens in the editor,
+# a plain one as written, with Format to turn it into a formatted one.
 [[panes.references.buttons.action.dialog.fields]]
-name = "body"
+name = "_body_md"
+label = "Text"
+type = "richtext"
+rows = 8
+required = true
+value = "${row.body}"
+showWhen = "row.kind == 'text' && row.format == 'markdown'"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "_body_plain"
 label = "Text"
 type = "textarea"
 rows = 8
 required = true
 value = "${row.body}"
-showWhen = "row.kind == 'text'"
+showWhen = "row.kind == 'text' && row.format != 'markdown' && format != 'markdown'"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "_body_converted"
+label = "Text"
+type = "richtext"
+literal = true
+rows = 8
+required = true
+compute = "_body_plain"
+showWhen = "row.kind == 'text' && row.format != 'markdown' && format == 'markdown'"
 
 [[panes.references.buttons.action.dialog.fields]]
 name = "format"
@@ -978,14 +992,13 @@ label = "Format"
 type = "select"
 required = true
 value = "${row.format}"
-showWhen = "row.kind == 'text'"
-options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
+showWhen = "row.kind == 'text' && row.format != 'markdown'"
+options = [{ value = "plain", label = "Plain text" }, { value = "markdown", label = "Formatted" }]
 
 [[panes.references.buttons.action.dialog.fields]]
-label = "Syntax"
-type = "readonly"
-value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
-showWhen = "row.kind == 'text' && format == 'markdown'"
+name = "body"
+type = "hidden"
+compute = "IF(row.kind != 'text', '', IF(row.format == 'markdown', _body_md, IF(format == 'markdown', _body_converted, _body_plain)))"
 
 [[panes.references.buttons]]
 label = "History"
