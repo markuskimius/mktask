@@ -374,12 +374,15 @@ def test_the_dialog_module_refs_js_imports_exists():
 
 
 def test_refs_js_renders_markdown_with_its_own_module():
-    """A Markdown snippet is rendered by static/markdown.js, imported from
-    /static (mktask's own route), which must export what refs.js calls."""
+    """A Markdown snippet is rendered by static/richtext.js, the module the
+    editor lives in, so it is shown through the schema it was written with;
+    it must export what refs.js calls, from the bundle."""
     js = (STATIC / "refs.js").read_text(encoding="utf-8")
-    assert 'import { renderMarkdown } from "/static/markdown.js";' in js
-    md = (STATIC / "markdown.js").read_text(encoding="utf-8")
-    assert "export function renderMarkdown(" in md
+    assert 'import { renderMarkdown } from "/static/richtext.js";' in js
+    md = (STATIC / "richtext.js").read_text(encoding="utf-8")
+    assert "export const { renderMarkdown, htmlToMarkdown } = T;" in md
+    assert "export function renderMarkdown(" in (PKG.parent / "editor" / "entry.js").read_text(encoding="utf-8")
+    assert not (STATIC / "markdown.js").exists(), "one renderer, not two"
     assert "innerHTML" not in md and "outerHTML" not in md and "insertAdjacentHTML" not in md, \
         "the renderer builds nodes; it never parses HTML"
 
@@ -1097,7 +1100,7 @@ def test_the_reader_follows_the_last_pick(app_config):
     for root in ("selected_task", "selected_ref", "detail_ref"):
         assert root in app_config["state"], f"state.{root} is not declared"
     assert 'app.state.set("detail_ref", ref)' in refs, "refs.js publishes its cursor"
-    assert 'import { renderMarkdown } from "/static/markdown.js";' in js
+    assert 'import { renderMarkdown } from "/static/richtext.js";' in js
     assert "innerHTML" not in js, "the Reader builds nodes; it never parses HTML"
     assert 'registerWidget("ref-reader"' in js
     for cls in set(re.findall(r'"(reader(?:-[a-z]+)*)', js)):

@@ -17,7 +17,7 @@
 // returning to the task block shows the task. Read-only: editing stays with the panes that own the records.
 
 import { registerWidget } from "/mkui/src/index.js";
-import { renderMarkdown } from "/static/markdown.js";
+import { renderMarkdown } from "/static/richtext.js";
 
 const SOURCES = ["selected_task", "selected_ref", "detail_ref"];
 

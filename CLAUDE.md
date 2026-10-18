@@ -38,19 +38,16 @@ mktask/
     reader.js       the `ref-reader` widget, the whole Reader body: the last task or reference
                     picked, full height (see UI)
     richtext.js     the `richtext` dialog field (mkui registerFieldType): a TipTap editor with a
-                    toolbar, read and written as Markdown; `literal = true` takes plain text
+                    toolbar, read and written as Markdown; `literal = true` takes plain text.
+                    Also exports `renderMarkdown`, the one renderer (snippets, notes, the Reader)
     vendor/tiptap.js  TipTap 3 + @tiptap/markdown as one ES module, built from editor/ and
                     committed with tiptap.js.LICENSES.txt (all MIT); npm only to rebuild
-    markdown.js     the Markdown renderer (snippets, notes, the Reader): parseMarkdown (pure tree, no DOM) and
-                    renderMarkdown (createElement/createTextNode only, never HTML)
     mktask.css      app overrides on top of mkui.css
 tests/
   test_cli.py       --help (defaults vs the TOML) / --version / bad flag
   test_config.py    _load_config, _find_config, main(), serve() overrides, --user, --files, banner
   test_services.py  user_prefix, format_task_id, TASK_ID_PATTERN, event_phrase, plain_text,
                     default_label (pure)
-  test_markdown.py  markdown.js under node (skipped without it), through a stub document that
-                    serializes what it is asked to build: each case is the markup it renders to
   test_server.py    boots the real server (-d :memory: --user mark), every op end to end, one
                     class per subject; TestUpgrade boots a pre-0.8.0 database. **Refs are labels,
                     not identities**: _txn makes each unique, or undo_action would group two
@@ -144,7 +141,7 @@ Three things mktask adds:
   - **Snippets are open from the start**, every one: `isOpen` is `flipped.has(id) === snippetsFolded`, where `snippetsFolded` is the pane-wide default ("Fold all" / "Open all" on the Snippets heading, kept in `localStorage` under `FOLD_KEY` through the try/catch `pref`; the one thing refs.js stores — the trail is memory only, and the test holds it there) and `flipped` the snippets clicked away from it, cleared when the task changes. Images and links keep the one-at-a-time `openId`. `openRef` opens either kind for `state.selected_ref`, which now also scrolls its line into view.
   - **Markdown notes render in the task block** (`task.notes_format`), through the same module.
   - **The cursor is published as `state.detail_ref`** (`publishCursor`, from `render`, deduped by row object the way mkui's `publishRow` is, so a live update republishes). Declared in `[state]`; only the Reader reads it.
-  - **A Markdown snippet is rendered by `markdown.js`** into `div.task-refs-body.task-refs-md`; a plain one stays a `pre`. The renderer never assigns HTML (`test_ui_config.py` fails on `innerHTML` in it), a link target outside `SAFE_HREF` (http(s), mailto, the mail-client schemes `isUrl` takes, ftp) is shown as its text, and a single newline is a `<br>`. node reads a `.js` file with no `package.json` as CommonJS, so `test_markdown.py` imports it from a `data:` URL.
+  - **A Markdown snippet is rendered by `renderMarkdown` from `richtext.js`** (the bundle's, through the editor's own schema, so it is shown as it was written; the Reader uses the same) into `div.task-refs-body.task-refs-md`; a plain one stays a `pre`. The schema's `DOMSerializer` builds the nodes, never assigned HTML (`test_ui_config.py` fails on `innerHTML` in `richtext.js`, and on a `markdown.js` coming back); raw HTML in the Markdown passes through the schema, a link outside `SAFE_PROTOCOLS` is shown as its text, and `.task-refs-md` is `pre-wrap`, as the editor is, so a single newline is a line break.
   - Sections: one per relation wording, then Snippets / Images / Files / Links, counted (`sectionOf` splits an image off the files by its stored `mime`, so the section is presentation, not a fifth kind). Within a section the selected task's own come first, then each descendant's, tagged `from <Task ID>`. **Images are a grid of tiles**, the thumbnail being the file itself: mktask stores no derived images. A clicked tile opens full size below the grid.
   - `state.selected_ref` **marks** a line, opens it and takes the cursor — only a reference this pane lists, and only once per selection (`appliedRefId`), so a line closed by hand stays closed. A delete is announced with the request's data (a `ref_id`, no `task_id`), so `onUpdate` matches a delete by id and an insert by scope. `onUpdate` also reads mkio's third `info` argument, so a row moved by an undo says so in the status line.
   - **Go to leaves a trail**: `back` / `forward`, in memory, `TRAIL_MAX` places of `{ task_id, ref_id }`. Only a Go to that lands pushes (and empties `forward`); the two chevrons that lead the toolbar (mkui's `icon`, deep-imported from `/mkui/src/lib/icons.js`) `step` along it through the same `jump` Go to uses, passing over a deleted task. `pending` puts the cursor back on the line left from once the references arrive.

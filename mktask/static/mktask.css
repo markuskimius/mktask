@@ -230,8 +230,10 @@
 }
 
 /* A Markdown snippet: the same box, ordinary flow, tight spacing. */
+/* pre-wrap as in the editor: a single newline in a paragraph is a line
+   break there, so it is one here too. */
 .task-refs-md {
-  white-space: normal;
+  white-space: pre-wrap;
 }
 
 .task-refs-md > :first-child { margin-top: 0; }

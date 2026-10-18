@@ -38,7 +38,8 @@
 // are what this pane is read for, so they are open from the start, every one:
 // a click folds or opens just that one, and "Fold all" on the Snippets heading
 // flips the default (remembered per browser). A snippet whose `format` is
-// "markdown" is rendered (markdown.js), and so are notes written in Markdown;
+// "markdown" is rendered, and so are notes written in Markdown, through the
+// editor's own schema (richtext.js), so they read as they were written;
 // plain text is shown exactly as written.
 //
 // The reference under the cursor is published as `state.detail_ref`, which
@@ -60,7 +61,7 @@
 
 import { registerWidget, ensureMkio } from "/mkui/src/index.js";
 import { icon } from "/mkui/src/lib/icons.js";
-import { renderMarkdown } from "/static/markdown.js";
+import { renderMarkdown } from "/static/richtext.js";
 
 const UPLOAD_URL = "/files";
 const REFS_SERVICE = "task_refs";
