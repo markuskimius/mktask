@@ -22,12 +22,13 @@ auto_migrate = true
 # that chain. The undo/redo ops step it. A delete is a real delete: the row
 # goes and its history goes with it.
 [tables.tasks]
-columns = { task_id = "TEXT PRIMARY KEY", parent_task_id = "TEXT NOT NULL DEFAULT ''", title = "TEXT NOT NULL", notes = "TEXT NOT NULL DEFAULT ''", status = "TEXT NOT NULL DEFAULT 'open'", importance = "INTEGER NOT NULL DEFAULT 3", urgency = "INTEGER NOT NULL DEFAULT 3", due = "TEXT NOT NULL DEFAULT ''", assigned_to = "TEXT NOT NULL DEFAULT ''", last_event = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", completed_at = "TEXT NOT NULL DEFAULT ''" }
+columns = { task_id = "TEXT PRIMARY KEY", parent_task_id = "TEXT NOT NULL DEFAULT ''", title = "TEXT NOT NULL", notes = "TEXT NOT NULL DEFAULT ''", notes_format = "TEXT NOT NULL DEFAULT 'plain'", status = "TEXT NOT NULL DEFAULT 'open'", importance = "INTEGER NOT NULL DEFAULT 3", urgency = "INTEGER NOT NULL DEFAULT 3", due = "TEXT NOT NULL DEFAULT ''", assigned_to = "TEXT NOT NULL DEFAULT ''", last_event = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", completed_at = "TEXT NOT NULL DEFAULT ''" }
 versioned = true
 
 # One row per reference: something a task points at. kind is "url" (href =
 # the URL, including mailto: and mail-client deep links), "text" (body = a
-# pasted snippet), "file" (href = "/files/<sha256>.<ext>" under the files
+# pasted snippet; format = "plain" or "markdown", always "plain" for the
+# other kinds), "file" (href = "/files/<sha256>.<ext>" under the files
 # directory, mime = its content type), or "task" (href = the related task's
 # Task ID, relation = a wording from the relations table, label = that
 # task's title, kept fresh by TaskTransactions). A task reference is stored as
@@ -37,7 +38,7 @@ versioned = true
 # versioned, like tasks: task_refs__history holds every version of every
 # reference, and undo/redo step one along its own chain.
 [tables.task_refs]
-columns = { ref_id = "INTEGER PRIMARY KEY AUTOINCREMENT", task_id = "TEXT NOT NULL", kind = "TEXT NOT NULL DEFAULT 'url'", relation = "TEXT NOT NULL DEFAULT ''", label = "TEXT NOT NULL DEFAULT ''", href = "TEXT NOT NULL DEFAULT ''", body = "TEXT NOT NULL DEFAULT ''", mime = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
+columns = { ref_id = "INTEGER PRIMARY KEY AUTOINCREMENT", task_id = "TEXT NOT NULL", kind = "TEXT NOT NULL DEFAULT 'url'", relation = "TEXT NOT NULL DEFAULT ''", label = "TEXT NOT NULL DEFAULT ''", href = "TEXT NOT NULL DEFAULT ''", body = "TEXT NOT NULL DEFAULT ''", format = "TEXT NOT NULL DEFAULT 'plain'", mime = "TEXT NOT NULL DEFAULT ''", created_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP", updated_at = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" }
 versioned = true
 
 # The relations two related tasks can have, one row per pair: forward is the
@@ -111,16 +112,18 @@ description = "Add, split, edit, complete, reopen, and delete tasks"
 [services.tasks.ops]
 add = [
     { table = "counters", op_type = "upsert", key = ["name"], fields = ["last"], defaults = { name = "task", last = 0 } },
-    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due", "assigned_to", "last_event"], defaults = { task_id = "", parent_task_id = "", notes = "", importance = 3, urgency = 3, due = "", assigned_to = "", last_event = "" } },
+    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "notes_format", "importance", "urgency", "due", "assigned_to", "last_event"], defaults = { task_id = "", parent_task_id = "", notes = "", notes_format = "plain", importance = 3, urgency = 3, due = "", assigned_to = "", last_event = "" } },
 ]
 split = [
     { table = "counters", op_type = "upsert", key = ["name"], fields = ["last"], defaults = { name = "task", last = 0 } },
-    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "importance", "urgency", "due", "assigned_to", "last_event"], defaults = { task_id = "", notes = "", importance = 3, urgency = 3, due = "", assigned_to = "", last_event = "" } },
+    { table = "tasks", op_type = "insert", fields = ["task_id", "parent_task_id", "title", "notes", "notes_format", "importance", "urgency", "due", "assigned_to", "last_event"], defaults = { task_id = "", notes = "", notes_format = "plain", importance = 3, urgency = 3, due = "", assigned_to = "", last_event = "" } },
 ]
 # `assigned_to` has no default here on purpose: an edit that left it out
 # would take the column's own default and quietly unassign the task.
+# `notes_format` has none either: TaskTransactions fills a missing one with
+# the task's own, so an edit that names none keeps it.
 edit = [
-    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["title", "notes", "importance", "urgency", "due", "assigned_to", "updated_at", "last_event"], defaults = { last_event = "" } },
+    { table = "tasks", op_type = "update", key = ["task_id"], fields = ["title", "notes", "notes_format", "importance", "urgency", "due", "assigned_to", "updated_at", "last_event"], defaults = { last_event = "" } },
 ]
 move = [
     { table = "tasks", op_type = "update", key = ["task_id"], fields = ["parent_task_id", "updated_at", "last_event"], defaults = { last_event = "" } },
@@ -135,10 +138,10 @@ delete = [
     { table = "tasks", op_type = "delete", key = ["task_id"] },
 ]
 add_ref = [
-    { table = "task_refs", op_type = "insert", fields = ["task_id", "kind", "relation", "label", "href", "body", "mime"], defaults = { kind = "url", relation = "", label = "", href = "", body = "", mime = "" } },
+    { table = "task_refs", op_type = "insert", fields = ["task_id", "kind", "relation", "label", "href", "body", "format", "mime"], defaults = { kind = "url", relation = "", label = "", href = "", body = "", format = "plain", mime = "" } },
 ]
 edit_ref = [
-    { table = "task_refs", op_type = "update", key = ["ref_id"], fields = ["label", "href", "body", "relation", "updated_at"], defaults = { label = "", href = "", body = "", relation = "" } },
+    { table = "task_refs", op_type = "update", key = ["ref_id"], fields = ["label", "href", "body", "format", "relation", "updated_at"], defaults = { label = "", href = "", body = "", format = "plain", relation = "" } },
 ]
 relabel_ref = [
     { table = "task_refs", op_type = "update", key = ["ref_id"], fields = ["label"] },

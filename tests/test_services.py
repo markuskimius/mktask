@@ -3,8 +3,8 @@
 import pytest
 
 from mktask.services import (
-    FILES_ROUTE, REF_KINDS, SEED_RELATIONS, TASK_ID_PATTERN, TOP_LEVEL_DETAIL,
-    default_label, event_phrase, format_task_id, user_prefix,
+    FILES_ROUTE, REF_FORMATS, REF_KINDS, SEED_RELATIONS, TASK_ID_PATTERN, TOP_LEVEL_DETAIL,
+    default_label, event_phrase, format_task_id, plain_text, user_prefix,
 )
 
 
@@ -56,6 +56,30 @@ def test_default_label(kind, href, body, expected):
     assert default_label(kind, href, body) == expected
 
 
+@pytest.mark.parametrize("line, words", [
+    ("**Call Bob** re: _budget_", "Call Bob re: budget"),
+    ("## Notes from the *Monday* call", "Notes from the Monday call"),
+    ("- [x] ~~old~~ item", "[x] old item"),
+    ("1. First, see [the spec](https://example.com/spec)", "First, see the spec"),
+    ("> quoted `code`", "quoted code"),
+    ("snake_case_name and 2 * 3 * 4", "snake_case_name and 2 * 3 * 4"),   # not emphasis
+    (r"\*literal\* stars", "*literal* stars"),
+    ("Plain words", "Plain words"),
+])
+def test_plain_text(line, words):
+    assert plain_text(line) == words
+
+
+@pytest.mark.parametrize("body, fmt, expected", [
+    ("**Call Bob** re: budget", "markdown", "Call Bob re: budget"),
+    ("**Call Bob** re: budget", "plain", "**Call Bob** re: budget"),   # plain text is as typed
+    ("```\ncode\n```\n# Heading", "markdown", "code"),                # a fence line is not a label
+    ("#\n\n- one", "markdown", "one"),                                 # a bare marker says nothing
+])
+def test_default_label_of_markdown(body, fmt, expected):
+    assert default_label("text", "", body, fmt) == expected
+
+
 def test_seed_relations_are_well_formed():
     import json
     seed = json.loads(SEED_RELATIONS.read_text(encoding="utf-8"))
@@ -68,6 +92,7 @@ def test_seed_relations_are_well_formed():
 
 def test_reference_kinds():
     assert REF_KINDS == ("url", "text", "file", "task")
+    assert REF_FORMATS == ("plain", "markdown")
     assert FILES_ROUTE == "/files/"
 
 

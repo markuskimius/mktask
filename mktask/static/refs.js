@@ -34,7 +34,15 @@
 // this pane is about, and a reference this pane does not list is not ours to
 // mark.
 //
-// A line's body — an image, a snippet, a URL — opens on click, one at a time.
+// A line's body — an image, a URL — opens on click, one at a time. Snippets
+// are what this pane is read for, so they are open from the start, every one:
+// a click folds or opens just that one, and "Fold all" on the Snippets heading
+// flips the default (remembered per browser). A snippet whose `format` is
+// "markdown" is rendered (markdown.js), and so are notes written in Markdown;
+// plain text is shown exactly as written.
+//
+// The reference under the cursor is published as `state.detail_ref`, which
+// the Reader pane (reader.js) follows alongside the References pane's own.
 //
 // "Go to" on a task reference selects the related task in the Tasks pane
 // (`table.select`, mkui ≥ 0.2.23). Selecting it there is the whole job:
@@ -52,12 +60,14 @@
 
 import { registerWidget, ensureMkio } from "/mkui/src/index.js";
 import { icon } from "/mkui/src/lib/icons.js";
+import { renderMarkdown } from "/static/markdown.js";
 
 const UPLOAD_URL = "/files";
 const REFS_SERVICE = "task_refs";
 const TASKS_SERVICE = "all_tasks";
 const TASKS_SUBID = "task-refs-tasks";
 const TRAIL_MAX = 50;   // the places Back remembers; the oldest falls off
+const FOLD_KEY = "mktask.snippetsFolded";   // localStorage: "Fold all" survives a reload
 
 // The sections below the task references, in the order they are shown: the
 // snippets first, since what was written down about a task reads before what
@@ -87,6 +97,12 @@ const ALWAYS = new Set(["status", "importance", "urgency", "score"]);
 
 const fieldValue = (task, name) =>
   name === "score" ? Number(task.importance) * Number(task.urgency) : task[name];
+
+/** localStorage, which a private window or blocked site data can refuse. */
+const pref = {
+  get: (key) => { try { return localStorage.getItem(key); } catch { return null; } },
+  set: (key, value) => { try { localStorage.setItem(key, value); } catch { /* not kept */ } },
+};
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -204,6 +220,11 @@ function renderRefBody(ref) {
     a.appendChild(img);
     return a;
   }
+  if (ref.kind === "text" && ref.format === "markdown") {
+    const div = el("div", "task-refs-body task-refs-md");
+    div.appendChild(renderMarkdown(ref.body));
+    return div;
+  }
   if (ref.kind === "text") return el("pre", "task-refs-body", ref.body);
   if (ref.kind === "url") return el("div", "task-refs-href", ref.href);
   return null;
@@ -232,7 +253,7 @@ function groupRefs(refs, ownerId) {
   const groups = [...links.keys()].sort().map((rel) => ({ title: capitalize(rel), refs: links.get(rel) }));
   for (const [section, title] of SECTIONS) {
     if (bySection.has(section)) {
-      groups.push({ title, refs: bySection.get(section), grid: GRID_SECTIONS.has(section) });
+      groups.push({ title, section, refs: bySection.get(section), grid: GRID_SECTIONS.has(section) });
     }
   }
   return groups;
@@ -551,10 +572,40 @@ registerWidget("task-refs", (spec, app, host) => {
   let taskId = null;          // the selected task
   let scope = new Set();      // it and every task split from it
   let scopeKey = "";          // the scope as one string, to spot a real change
-  let openId = null;          // the one line whose body is open
+  let openId = null;          // the one image or link whose body is open
+  let snippetsFolded = pref.get(FOLD_KEY) === "1";   // the default for every snippet
+  const flipped = new Set();  // snippets clicked away from that default
   let selectedRefId = null;   // state.selected_ref, ours or another task's
   let appliedRefId = null;    // the last one this pane opened, so a line the
                               // user closed by hand stays closed
+
+  const isOpen = (ref) => (ref.kind === "text"
+    ? flipped.has(ref.ref_id) === snippetsFolded
+    : ref.ref_id === openId);
+
+  /** Open a reference's body, whichever way its kind keeps that. */
+  const openRef = (ref) => {
+    if (ref.kind !== "text") { openId = ref.ref_id; return; }
+    if (snippetsFolded) flipped.add(ref.ref_id); else flipped.delete(ref.ref_id);
+  };
+
+  /** Fold every snippet, or open every one; a snippet clicked since is reset. */
+  const foldAll = (folded) => {
+    snippetsFolded = folded;
+    flipped.clear();
+    pref.set(FOLD_KEY, folded ? "1" : "0");
+    render();
+  };
+
+  // The reference under the cursor, for the Reader. Deduped like mkui's own
+  // publishRow: a new row object (a live update) is a change, the same one is not.
+  let publishedRef = null;
+  const publishCursor = () => {
+    const ref = cursorRef();
+    if (ref === publishedRef) return;
+    publishedRef = ref;
+    app.state.set("detail_ref", ref);
+  };
 
   /** The task and everything split from it, to any depth. */
   function subtree(id) {
@@ -596,21 +647,30 @@ registerWidget("task-refs", (spec, app, host) => {
       const value = fieldValue(task, name);
       if ((value == null || value === "") && !ALWAYS.has(name)) continue;
       fields.appendChild(el("span", "task-refs-field-label", label));
+      if (name === "notes" && task.notes_format === "markdown") {
+        const notes = el("div", "task-refs-field-value task-refs-field-notes task-refs-md");
+        notes.appendChild(renderMarkdown(value));
+        fields.appendChild(notes);
+        continue;
+      }
       fields.appendChild(el("span", `task-refs-field-value task-refs-field-${name}`, String(value ?? "")));
     }
     taskEl.appendChild(fields);
   }
 
   function render() {
+    // Set when the cursor jumps to a line from elsewhere, to scroll it into view.
+    let landed = false;
     if (selectedRefId != null && selectedRefId !== appliedRefId && refs.has(selectedRefId)) {
       // The References pane's cursor opens its line here — and takes this
       // pane's cursor with it, so Edit edits the reference it points at.
-      appliedRefId = openId = selectedRefId;
+      appliedRefId = selectedRefId;
+      openRef(refs.get(selectedRefId));
       cursor = { kind: "ref", ref_id: selectedRefId };
+      landed = true;
     }
     // A Back or Forward lands on the line it left from, once that line is
     // here: the task's references arrive after the task does.
-    let landed = false;
     if (pending && pending.task_id === taskId && refs.has(pending.ref_id)) {
       cursor = { kind: "ref", ref_id: pending.ref_id };
       pending = null;
@@ -621,6 +681,7 @@ registerWidget("task-refs", (spec, app, host) => {
     const markedId = cursor?.kind === "ref" ? cursor.ref_id : null;
     renderTask();
     updateButtons();
+    publishCursor();
     list.replaceChildren();
     if (!taskId) return;
     const groups = groupRefs(refs.values(), taskId);
@@ -629,13 +690,22 @@ registerWidget("task-refs", (spec, app, host) => {
       return;
     }
     for (const group of groups) {
-      list.appendChild(el("div", "task-refs-group", `${group.title} (${group.refs.length})`));
+      const heading = el("div", "task-refs-group", `${group.title} (${group.refs.length})`);
+      if (group.section === "text") {
+        const toggle = el("button", "task-refs-group-toggle", snippetsFolded ? "Open all" : "Fold all");
+        toggle.type = "button";
+        toggle.addEventListener("click", () => foldAll(!snippetsFolded));
+        heading.appendChild(toggle);
+      }
+      list.appendChild(heading);
       const ownerOf = (ref) => (ref.task_id === taskId ? null : (tasks.get(ref.task_id) ?? {}));
       // A click puts the cursor on the reference (what the toolbar acts on)
       // and, when there is something more to see, opens or closes its body.
       const pick = (ref) => {
         cursor = { kind: "ref", ref_id: ref.ref_id };
-        if (hasBody(ref)) openId = openId === ref.ref_id ? null : ref.ref_id;
+        if (ref.kind === "text") {
+          if (!flipped.delete(ref.ref_id)) flipped.add(ref.ref_id);
+        } else if (hasBody(ref)) openId = openId === ref.ref_id ? null : ref.ref_id;
         render();
       };
 
@@ -659,7 +729,7 @@ registerWidget("task-refs", (spec, app, host) => {
       for (const ref of group.refs) {
         const item = el("div", "task-refs-item");
         if (ref.ref_id === markedId) item.classList.add("task-refs-item-marked");
-        const open = ref.ref_id === openId;
+        const open = isOpen(ref);
         const line = renderRefLine(ref, { onGoTo: goTo, expanded: open, owner: ownerOf(ref) });
         if (hasBody(ref)) line.classList.add("task-refs-line-open");
         line.addEventListener("click", () => pick(ref));
@@ -788,6 +858,7 @@ registerWidget("task-refs", (spec, app, host) => {
       setStatus("");
       taskId = id;
       openId = appliedRefId = null;
+      flipped.clear();
       cursor = task ? { kind: "task" } : null;
       if (pending && pending.task_id !== id) pending = null;   // selected away mid-step
       applyScope();

@@ -373,6 +373,17 @@ def test_the_dialog_module_refs_js_imports_exists():
     assert "export function openDialog(" in module.read_text(encoding="utf-8")
 
 
+def test_refs_js_renders_markdown_with_its_own_module():
+    """A Markdown snippet is rendered by static/markdown.js, imported from
+    /static (mktask's own route), which must export what refs.js calls."""
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
+    assert 'import { renderMarkdown } from "/static/markdown.js";' in js
+    md = (STATIC / "markdown.js").read_text(encoding="utf-8")
+    assert "export function renderMarkdown(" in md
+    assert "innerHTML" not in md and "outerHTML" not in md and "insertAdjacentHTML" not in md, \
+        "the renderer builds nodes; it never parses HTML"
+
+
 def test_detail_toolbar_borrows_the_pane_dialogs(app_config):
     """The Detail pane's Edit / Delete open the dialogs the Tasks and
     References panes already declare — borrowed by name, never copied, so the
@@ -716,7 +727,9 @@ def test_go_to_leaves_a_trail_back():
     assert "forward.length = 0" in js, "a new Go to abandons the forward branch"
     assert "if (result.missing) { skipped += 1; continue; }" in js, "a deleted task is passed over"
     assert "pending.task_id === taskId && refs.has(pending.ref_id)" in js, "lands on the line it left"
-    assert "localStorage" not in js and "sessionStorage" not in js, "the trail is the page's alone"
+    # The trail is the page's alone: the one thing refs.js stores is "Fold all".
+    assert "sessionStorage" not in js and js.count("localStorage.setItem(") == 1
+    assert re.findall(r"pref\.set\((\w+)", js) == ["FOLD_KEY"], "the trail is the page's alone"
     # Both directions are capped, and the cap is one constant.
     assert re.search(r"const TRAIL_MAX = \d+;", js)
     assert "if (back.length > TRAIL_MAX) back.shift()" in js
@@ -980,6 +993,88 @@ def _reference_dialogs(app_config):
             for kind, label in (("url", "Add Link"), ("text", "Add Text"), ("task", "Reference Task"))}
 
 
+def test_a_snippet_picks_its_format(app_config):
+    """Add Text and the References pane's Edit carry a Format select whose
+    values are exactly REF_FORMATS; Add opens on Markdown, Edit on the row's
+    own, and the syntax line shows only for Markdown. Add Text leaves a
+    Markdown label blank for the server, which strips the markers."""
+    from mktask.services import REF_FORMATS
+    refs = app_config["panes"]["references"]
+    add = _reference_dialogs(app_config)["text"]
+    edit = next(b for b in refs["buttons"] if b["label"] == "Edit")["action"]["dialog"]
+    for dialog, value in ((add, "markdown"), (edit, "${row.format}")):
+        fmt = _fields(dialog)["format"]
+        assert fmt["type"] == "select" and fmt["required"] is True and fmt["value"] == value
+        assert [o["value"] for o in fmt["options"]] == ["markdown", "plain"]
+        assert set(o["value"] for o in fmt["options"]) == set(REF_FORMATS)
+        hint = [x for x in dialog["fields"] if x.get("type") == "readonly" and x.get("label") == "Syntax"]
+        assert len(hint) == 1 and "format == 'markdown'" in hint[0]["showWhen"], "the syntax line, Markdown only"
+    assert _fields(edit)["format"]["showWhen"] == "row.kind == 'text'"
+    assert _fields(add)["label"]["compute"].startswith("IF(format == 'markdown', '',")
+    assert "format" in refs["history"]["columns"], "a format switch shows in a diff"
+
+
+def test_notes_pick_their_format(app_config):
+    """New, Edit and Split carry the notes' Format, as Add Text carries a
+    snippet's: Markdown for a new task, the task's own on Edit, and the
+    Syntax line only for Markdown. A task's History diffs it."""
+    from mktask.services import REF_FORMATS
+    tasks = app_config["panes"]["tasks"]
+    by_label = {b["label"]: b["action"]["dialog"] for b in tasks["buttons"] if b.get("action", {}).get("type") == "dialog"}
+    for label, value in (("New", "markdown"), ("Edit", "${row.notes_format}"), ("Split", "markdown")):
+        dialog = by_label[label]
+        fmt = _fields(dialog)["notes_format"]
+        assert fmt["type"] == "select" and fmt["required"] is True and fmt["value"] == value, label
+        assert [o["value"] for o in fmt["options"]] == ["markdown", "plain"]
+        assert set(o["value"] for o in fmt["options"]) == set(REF_FORMATS)
+        names = [f.get("name") for f in dialog["fields"]]
+        assert names.index("notes_format") == names.index("notes") + 1, "Format sits under Notes"
+        hint = [f for f in dialog["fields"] if f.get("type") == "readonly" and f.get("label") == "Syntax"]
+        assert len(hint) == 1 and hint[0]["showWhen"] == "notes_format == 'markdown'", label
+    assert "notes_format" in tasks["history"]["columns"]
+
+
+def test_the_reader_follows_the_last_pick(app_config):
+    """The Reader pane is one ref-reader widget (static/reader.js), in the
+    default frames and on the Tasks menu. It follows the three published
+    selections — the task, the References pane's reference, and the Detail
+    pane's cursor, which refs.js publishes as `detail_ref` — renders Markdown
+    with the same module, and every class it paints with has a rule."""
+    pane = app_config["panes"]["reader"]
+    assert [w["type"] for w in pane["widgets"]] == ["ref-reader"]
+    frames = json.dumps(app_config["frames"])
+    assert '"reader"' in frames, "the Reader is in the default layout"
+    tasks_menu = next(m for m in app_config["menubar"] if m["label"] == "Tasks")
+    assert {"label": "Reader", "action": "pane.show", "args": "reader"} in tasks_menu["items"]
+    js = (STATIC / "reader.js").read_text(encoding="utf-8")
+    refs = (STATIC / "refs.js").read_text(encoding="utf-8")
+    css = (STATIC / "mktask.css").read_text(encoding="utf-8")
+    assert 'const SOURCES = ["selected_task", "selected_ref", "detail_ref"];' in js
+    for root in ("selected_task", "selected_ref", "detail_ref"):
+        assert root in app_config["state"], f"state.{root} is not declared"
+    assert 'app.state.set("detail_ref", ref)' in refs, "refs.js publishes its cursor"
+    assert 'import { renderMarkdown } from "/static/markdown.js";' in js
+    assert "innerHTML" not in js, "the Reader builds nodes; it never parses HTML"
+    assert 'registerWidget("ref-reader"' in js
+    for cls in set(re.findall(r'"(reader(?:-[a-z]+)*)', js)):
+        assert f".{cls}" in css, f"class {cls} has no CSS rule"
+    assert "reader-body" == pane["widgets"][0]["class"] and ".reader-body" in css
+
+
+def test_detail_opens_every_snippet(app_config):
+    """Snippets are open from the start; a click folds or opens one, and
+    "Fold all" on the Snippets heading flips the default, kept per browser.
+    Markdown notes render in the task block."""
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
+    css = (STATIC / "mktask.css").read_text(encoding="utf-8")
+    assert "flipped.has(ref.ref_id) === snippetsFolded" in js
+    assert 'const FOLD_KEY = "mktask.snippetsFolded";' in js
+    assert 'snippetsFolded ? "Open all" : "Fold all"' in js
+    assert ".task-refs-group-toggle" in css
+    assert 'task.notes_format === "markdown"' in js
+    assert "notes_format" in app_config["panes"]["tasks"]["columns"], "the published row carries it"
+
+
 def test_one_reference_dialog_per_kind_on_the_references_pane(app_config, server_config):
     """A button per kind — Add Link, Add Text, Reference Task — on the References pane, where
     references are shown, with no kind dropdown. Each dialog's first field is
@@ -999,7 +1094,8 @@ def test_one_reference_dialog_per_kind_on_the_references_pane(app_config, server
         assert f["kind"] == {"name": "kind", "type": "hidden", "value": kind}, "the button is the kind"
         assert dialog["fields"][0]["name"] == "task_id", "the Task picker comes first"
         assert "${" in dialog["title"] and "task_id" in dialog["title"], "the title follows the picker"
-        assert "showWhen" not in json.dumps(dialog), "nothing left to branch on"
+        assert "kind" not in json.dumps([x.get("showWhen", "") for x in dialog["fields"]]), \
+            "nothing left to branch on"
     f = _fields(dialogs["url"])
     assert f["_url"]["required"] is True and f["href"] == {"name": "href", "type": "hidden", "compute": "_url"}
     assert f["label"]["compute"] == "_url", "a live suggestion"

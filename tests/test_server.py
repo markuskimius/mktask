@@ -863,6 +863,107 @@ class TestReferences:
         assert snap["rows"][0]["kind"] == "text"
 
 
+class TestFormat:
+    """A text reference is plain or Markdown; every other kind is plain."""
+
+    async def test_a_snippet_is_plain_unless_it_says_markdown(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Formats", "fm1")
+                await _add_ref(ws, task, "fm2", kind="text", body="**as typed**")
+                await _add_ref(ws, task, "fm3", kind="text", body="# **Call Bob** re: budget\n\nmore",
+                               format="markdown")
+                await _add_ref(ws, task, "fm4", kind="url", href="https://a", format="markdown")
+                await _add_ref(ws, task, "fm5", kind="file", href="/files/x.pdf", format="markdown")
+                r = await _add_ref(ws, task, "fm6", expect="error", kind="text", body="x", format="html")
+                assert r["message"] == "Unknown format 'html'"
+                await asyncio.sleep(0.2)
+                rows = {r["body"] or r["kind"]: r for r in await _refs(ws, task)}
+        assert rows["**as typed**"]["format"] == "plain", "no format is plain"
+        assert rows["**as typed**"]["label"] == "**as typed**", "a plain label keeps its asterisks"
+        md = rows["# **Call Bob** re: budget\n\nmore"]
+        assert md["format"] == "markdown"
+        assert md["label"] == "Call Bob re: budget", "a Markdown label is the words, not the markers"
+        assert rows["url"]["format"] == rows["file"]["format"] == "plain", "only a snippet is formatted"
+
+    async def test_edit_switches_the_format_and_undo_steps_it_back(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Reformat", "fe1")
+                await _add_ref(ws, task, "fe2", kind="text", body="*note*", format="markdown")
+                await _add_ref(ws, task, "fe3", kind="url", href="https://a")
+                await asyncio.sleep(0.2)
+                rows = {r["kind"]: r for r in await _refs(ws, task)}
+                text, url = rows["text"]["ref_id"], rows["url"]["ref_id"]
+
+                # An edit that names no format keeps the one the snippet has.
+                await _txn(ws, "edit_ref", {"ref_id": text, "label": "", "body": "*note* again",
+                                            "updated_at": NOW}, "fe4")
+                await asyncio.sleep(0.2)
+                assert {r["ref_id"]: r for r in await _refs(ws, task)}[text]["format"] == "markdown"
+
+                # The link first: its edit touches the task, and undo refuses to
+                # step the snippet's action back past a later write to the task.
+                await _txn(ws, "edit_ref", {"ref_id": url, "label": "", "href": "https://b",
+                                            "format": "markdown", "updated_at": NOW}, "fe6")
+                await _txn(ws, "edit_ref", {"ref_id": text, "label": "", "body": "*note* again",
+                                            "format": "plain", "updated_at": NOW}, "fe5")
+                r = await _txn(ws, "edit_ref", {"ref_id": text, "label": "", "body": "x",
+                                                "format": "rtf", "updated_at": NOW}, "fe7", expect="error")
+                assert r["message"] == "Unknown format 'rtf'"
+                await asyncio.sleep(0.2)
+                after = {r["ref_id"]: r for r in await _refs(ws, task)}
+                assert after[text]["format"] == "plain"
+                assert after[text]["label"] == "*note* again", "a plain label is the first line as typed"
+                assert after[url]["format"] == "plain", "a link stays plain"
+
+                await _undo(ws, {"ref_id": text}, "fe8")
+                await asyncio.sleep(0.2)
+                back = {r["ref_id"]: r for r in await _refs(ws, task)}[text]
+                assert back["format"] == "markdown", "undo steps the format back"
+                assert back["label"] == "note again"
+                chain = await _chain(ws, "ref_version_chain", {"ref_id": text})
+                assert [v["format"] for v in chain] == ["markdown", "markdown", "plain"]
+
+
+class TestNotesFormat:
+    """A task's notes are plain or Markdown, like a snippet."""
+
+    async def test_add_split_and_edit_carry_the_notes_format(self, server):
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                await _txn(ws, "add", {"title": "Plain notes", "notes": "**as typed**"}, "nf1")
+                await _txn(ws, "add", {"title": "Formatted notes", "notes": "# Plan",
+                                       "notes_format": "markdown"}, "nf2")
+                r = await _txn(ws, "add", {"title": "Bad", "notes_format": "html"}, "nf3", expect="error")
+                assert r["message"] == "Unknown format 'html'"
+                rows = await _snapshot(ws, "nf-a")
+                plain, md = rows["Plain notes"]["task_id"], rows["Formatted notes"]["task_id"]
+                assert rows["Plain notes"]["notes_format"] == "plain", "no format is plain"
+                assert rows["Formatted notes"]["notes_format"] == "markdown"
+                assert "Bad" not in rows, "a refused add writes nothing"
+
+                await _split(ws, md, "Child", "nf4", notes="- one", notes_format="markdown")
+                await _split(ws, md, "Plain child", "nf5")
+                rows = await _snapshot(ws, "nf-b")
+                assert rows["Child"]["notes_format"] == "markdown"
+                assert rows["Plain child"]["notes_format"] == "plain"
+
+                # An edit that names no format keeps the task's own.
+                await _edit(ws, md, "nf6", title="Formatted notes", notes="# Plan, revised")
+                assert (await _snapshot(ws, "nf-c"))["Formatted notes"]["notes_format"] == "markdown"
+                await _edit(ws, plain, "nf7", title="Plain notes", notes="**now bold**", notes_format="markdown")
+                r = await _txn(ws, "edit", {"task_id": plain, "title": "Plain notes", "notes": "", "importance": 3,
+                                            "urgency": 3, "due": "", "assigned_to": "", "notes_format": "rtf",
+                                            "updated_at": NOW}, "nf8", expect="error")
+                assert r["message"] == "Unknown format 'rtf'"
+                assert (await _snapshot(ws, "nf-d"))["Plain notes"]["notes_format"] == "markdown"
+
+                await _undo(ws, {"task_id": plain}, "nf9")
+                back = (await _snapshot(ws, "nf-e"))["Plain notes"]
+                assert (back["notes"], back["notes_format"]) == ("**as typed**", "plain"), "undo steps it back"
+
+
 class TestSubtreeReferences:
     """What the Detail pane's own queries need from the server: a filter that
     names a whole subtree, and the parent/child fields the subtree is computed
@@ -2302,6 +2403,8 @@ class TestUpgrade:
             cols = dict(cfg["tables"][name]["columns"])
             cols.pop("last_event", None)
             cols.pop("assigned_to", None)
+            cols.pop("format", None)
+            cols.pop("notes_format", None)
             con.execute(f"CREATE TABLE {name} ({', '.join(f'{c} {d}' for c, d in cols.items())})")
         con.execute("INSERT INTO tasks (task_id, title, importance, urgency) "
                     "VALUES ('TKMA00000001', 'Made before history', 5, 3)")
@@ -2327,12 +2430,14 @@ class TestUpgrade:
                 task = rows["Made before history"]
                 assert task["_mkio_version"] == 1, "no cursor on a row that predates versioning"
                 assert task["last_event"] == "", "a row from before has no event to name"
+                assert task["notes_format"] == "plain", "notes from before formats are plain"
                 assert task["assigned_to"] == "", "a column added later starts empty"
 
                 chain = await _chain(ws, "task_version_chain", {"task_id": task["task_id"]})
                 assert [c["_mkio_op"] for c in chain] == ["baseline"]
                 refs = await _refs(ws, task["task_id"])
                 assert [r["label"] for r in refs] == ["old link"]
+                assert refs[0]["format"] == "plain", "a reference from before formats is plain"
 
                 # The point of the baseline: the first edit is undoable.
                 await _edit(ws, task["task_id"], "up2", title="Edited after upgrading",

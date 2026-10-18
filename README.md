@@ -80,6 +80,29 @@ clicking a snippet or a link opens it where it stands. The subtree comes from
 the tasks themselves, not from what the blotter is showing, so a completed
 child's references stay with its ancestor.
 
+**A snippet can be formatted.** The Add Text and Edit dialogs ask for a
+**Format**: *Markdown* (what Add Text opens on) or *Plain text*. A Markdown
+snippet is rendered in the Detail pane — `**bold**`, `_italic_`,
+`~~strike~~`, `` `code` ``, `#` headings, `-` and `1.` lists (indent to
+nest), `>` quotes, fenced code blocks, `---` rules, `[text](url)` and bare
+URLs; a single line break is kept, as you typed it. Its label, left blank,
+is the first line without the markers. A plain snippet is shown exactly as
+written, which is what a pasted email wants, and a snippet pasted or dropped
+in the Detail pane is always plain. Anything that looks like HTML is shown
+as the characters typed, never as markup. **A task's notes** take the same
+Format in New, Edit and Split, and Markdown notes are rendered in the
+Detail pane's task block.
+
+**Snippets are open from the start** in the Detail pane, so selecting a task
+shows its notes and every snippet, formatted, with nothing more to click.
+Click a snippet to fold it; *Fold all* on the Snippets heading folds every
+one, and the browser remembers which you prefer.
+
+**The Reader** (under Detail; *Tasks › Reader* reopens it) shows the last
+thing you picked, full height: a reference picked in the References or
+Detail pane — a snippet formatted, an image full width, a file or link to
+open — or, when you picked a task, its notes. It follows edits live.
+
 **The Detail pane edits what it shows.** It has its own toolbar — *Add Link*,
 *Add Text*, and *Reference Task* are the References pane's add buttons — and one
 cursor: click the task block or click a reference. *Edit* opens the dialog

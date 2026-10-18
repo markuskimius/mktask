@@ -143,6 +143,23 @@
   margin-top: 0;
 }
 
+/* "Fold all" / "Open all" on the Snippets heading. */
+.task-refs-group-toggle {
+  float: right;
+  padding: 0 0.2em;
+  border: none;
+  background: none;
+  color: var(--mkui-accent, #4fc1ff);
+  font: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+
+.task-refs-group-toggle:hover {
+  text-decoration: underline;
+}
+
 .task-refs-item {
   padding: 0.15em 0.25em;
   border-radius: 3px;
@@ -210,6 +227,76 @@
   font: inherit;
   background: var(--mkui-bg-alt, rgba(255, 255, 255, 0.04));
   border-radius: 3px;
+}
+
+/* A Markdown snippet: the same box, ordinary flow, tight spacing. */
+.task-refs-md {
+  white-space: normal;
+}
+
+.task-refs-md > :first-child { margin-top: 0; }
+.task-refs-md > :last-child { margin-bottom: 0; }
+
+.task-refs-md p,
+.task-refs-md ul,
+.task-refs-md ol,
+.task-refs-md blockquote,
+.task-refs-md pre {
+  margin: 0 0 0.5em;
+}
+
+.task-refs-md li > p { margin: 0; }
+.task-refs-md ul,
+.task-refs-md ol { padding-left: 1.5em; }
+
+.task-refs-md h1,
+.task-refs-md h2,
+.task-refs-md h3,
+.task-refs-md h4,
+.task-refs-md h5,
+.task-refs-md h6 {
+  margin: 0.6em 0 0.3em;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.task-refs-md h1 { font-size: 1.2em; }
+.task-refs-md h2 { font-size: 1.1em; }
+
+.task-refs-md blockquote {
+  padding-left: 0.75em;
+  border-left: 3px solid var(--mkui-border, rgba(128, 128, 128, 0.4));
+  color: var(--mkui-fg-mute, #858585);
+}
+
+.task-refs-md code {
+  font-family: var(--mkui-font-mono, monospace);
+  font-size: 0.9em;
+  padding: 0 0.25em;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.18);  /* reads on any box: the body, the notes, the Reader */
+}
+
+.task-refs-md pre {
+  padding: 0.5em;
+  overflow: auto;
+  white-space: pre;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.18);  /* reads on any box: the body, the notes, the Reader */
+}
+
+.task-refs-md pre code {
+  padding: 0;
+  background: none;
+}
+
+.task-refs-md a {
+  color: var(--mkui-accent, #4fc1ff);
+}
+
+.task-refs-md hr {
+  border: none;
+  border-top: 1px solid var(--mkui-border, rgba(128, 128, 128, 0.4));
 }
 
 .task-refs-href {
@@ -290,3 +377,60 @@
   border-radius: 3px;
 }
 
+/* The Reader pane: the ref-reader widget (static/reader.js) is the whole
+   body — the last task or reference picked, full height, scrolling as one. */
+.reader-body {
+  display: block;
+}
+
+.reader {
+  padding: 0.6em 0.9em 0.9em;
+}
+
+.reader-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  font-weight: bold;
+  overflow-wrap: anywhere;
+}
+
+.reader-title {
+  font-size: 1.05em;
+}
+
+.reader-id {
+  font-family: var(--mkui-font-mono, monospace);
+  font-weight: normal;
+  color: var(--mkui-fg-mute, #858585);
+}
+
+.reader-sub {
+  margin: 0.2em 0 0.6em;
+  font-size: 0.8em;
+  color: var(--mkui-fg-mute, #858585);
+}
+
+.reader-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+pre.reader-text {
+  white-space: pre-wrap;
+  font: inherit;
+}
+
+.reader-empty {
+  color: var(--mkui-fg-mute, #858585);
+}
+
+.reader-link {
+  overflow-wrap: anywhere;
+}
+
+.reader-image {
+  display: block;
+  max-width: 100%;
+  border-radius: 3px;
+}

@@ -72,6 +72,9 @@ COUNTER_NAME = "task"
 _MIN_DIGITS = 8
 
 REF_KINDS = ("url", "text", "file", "task")
+#: How a text reference's body, or a task's notes, is written. Every other
+#: kind of reference is "plain".
+REF_FORMATS = ("plain", "markdown")
 #: The versioned tables, each with its key column and its cursor-move ops.
 #: mkio records every version of these in `<table>__history`; everything
 #: undo/redo does is driven off this map.
@@ -150,16 +153,58 @@ def event_phrase(action: str, detail: str = "", kind: str = "") -> str:
     return named(action.replace("_", " ").capitalize())
 
 
-def default_label(kind: str, href: str, body: str) -> str:
+_MD_BLOCK = re.compile(r"^(?:#{1,6}(?:\s+|$)|>\s?|[-*+]\s+|\d+[.)]\s+)+")
+_MD_INLINE = (
+    (re.compile(r"!?\[([^\]]*)\]\([^)]*\)"), r"\1"),   # [text](url) → text
+    (re.compile(r"(\*\*|__|~~)(.+?)\1"), r"\2"),
+    (re.compile(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])"), r"\1"),
+    (re.compile(r"(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)"), r"\1"),
+    (re.compile(r"`([^`]*)`"), r"\1"),
+)
+_MD_ESCAPE = re.compile(r"\\([\\`*_~\[\]()#>+\-.!])")
+_MD_HELD = 0xE000   # escaped characters wait in the private use area while markers go
+
+
+def plain_text(line: str) -> str:
+    """One line of Markdown as the words it shows: markers and link targets gone."""
+    line = _MD_ESCAPE.sub(lambda m: chr(_MD_HELD + ord(m[1])), line.strip())
+    line = _MD_BLOCK.sub("", line)
+    for pattern, repl in _MD_INLINE:
+        line = pattern.sub(repl, line)
+    return re.sub("[\ue000-\ue07f]", lambda m: chr(ord(m[0]) - _MD_HELD), line).strip()
+
+
+def default_label(kind: str, href: str, body: str, fmt: str = "plain") -> str:
     """The label a reference shows when the client sent none."""
     if kind == "url":
         return href
     if kind == "file":
         return href.rsplit("/", 1)[-1]
     if kind == "text":
-        first = next((line.strip() for line in body.splitlines() if line.strip()), "")
+        lines = (line.strip() for line in body.splitlines())
+        if fmt == "markdown":
+            lines = (plain_text(line) for line in lines if not line.startswith("```"))
+        first = next((line for line in lines if line), "")
         return first if len(first) <= _LABEL_MAX else first[: _LABEL_MAX - 1] + "…"
     return ""
+
+
+def _with_notes_format(data: dict[str, Any], current: str = "plain") -> dict[str, Any]:
+    """`data` with its notes' format checked, else `current` (the task's own)."""
+    fmt = str(data.get("notes_format") or current)
+    if fmt not in REF_FORMATS:
+        raise ValueError(f"Unknown format {fmt!r}")
+    return {**data, "notes_format": fmt}
+
+
+def _format_of(kind: str, data: dict[str, Any], current: str = "plain") -> str:
+    """A text reference's format, checked, else `current`; every other kind is plain."""
+    if kind != "text":
+        return "plain"
+    fmt = str(data.get("format") or current)
+    if fmt not in REF_FORMATS:
+        raise ValueError(f"Unknown format {fmt!r}")
+    return fmt
 
 
 class TaskTransactions(TransactionService):
@@ -340,7 +385,7 @@ class TaskTransactions(TransactionService):
         return [{**base, "task_id": e["task_id"], "last_event": e["last_event"]} for e in events]
 
     async def _op_add(self, data: dict[str, Any], ref: str | None) -> dict[str, Any]:
-        data, *assignee = await self._assignee_steps(data)
+        data, *assignee = await self._assignee_steps(_with_notes_format(data))
         events = [self._event(data["task_id"], "created", data.get("title", ""))]
         return await self._submit(
             "add", self._rows_for(events, data), data, ref,
@@ -358,7 +403,7 @@ class TaskTransactions(TransactionService):
         # carrying it is split.
         was = await self._task(data["parent_task_id"])
         data, *assignee = await self._assignee_steps(
-            data, previous=(was or {}).get("assigned_to", "")
+            _with_notes_format(data), previous=(was or {}).get("assigned_to", "")
         )
         task_id, parent = data["task_id"], data["parent_task_id"]
         events = [
@@ -447,7 +492,8 @@ class TaskTransactions(TransactionService):
         """A plain update, plus a relabel of every task reference that points at this task."""
         was = await self._task(data["task_id"])
         data, a_ops, a_params = await self._assignee_steps(
-            data, previous=(was or {}).get("assigned_to", "")
+            _with_notes_format(data, (was or {}).get("notes_format") or "plain"),
+            previous=(was or {}).get("assigned_to", ""),
         )
         event = self._event(data["task_id"], "edited", data.get("title", ""))
         compiled = self._resolve_ops({"op": "edit"})
@@ -789,9 +835,9 @@ class TaskTransactions(TransactionService):
                 raise ValueError(f"{task_id} already {relation.replace('_', ' ')} {href}")
             rows = [
                 {**data, "kind": kind, "relation": relation, "href": href,
-                 "label": other["title"], "body": "", "mime": ""},
+                 "label": other["title"], "body": "", "format": "plain", "mime": ""},
                 {**data, "task_id": href, "kind": kind, "relation": inverse,
-                 "href": task_id, "label": task["title"], "body": "", "mime": ""},
+                 "href": task_id, "label": task["title"], "body": "", "format": "plain", "mime": ""},
             ]
             # A task reference is a change to both tasks, so both say so. The events
             # name no ref_id: the row's is assigned by SQLite as it is
@@ -807,8 +853,10 @@ class TaskTransactions(TransactionService):
             raise ValueError("A text reference needs some text")
         if kind == "file" and not href.startswith(FILES_ROUTE):
             raise ValueError("A file reference must point under /files/")
+        fmt = _format_of(kind, data)
         row = {**data, "kind": kind, "relation": "", "href": href if kind != "text" else "",
-               "body": body if kind == "text" else "", "label": label or default_label(kind, href, body)}
+               "body": body if kind == "text" else "", "format": fmt,
+               "label": label or default_label(kind, href, body, fmt)}
         return await self._submit("add_ref", [row], data, ref, events=[
             self._event(task_id, "ref_added", row["label"], kind=kind),
         ])
@@ -844,9 +892,11 @@ class TaskTransactions(TransactionService):
             href = ""
         elif not href:
             raise ValueError("A link needs a URL")
-        label = str(data.get("label") or "").strip() or default_label(row["kind"], href, body)
+        fmt = _format_of(row["kind"], data, row.get("format") or "plain")
+        label = str(data.get("label") or "").strip() or default_label(row["kind"], href, body, fmt)
         return await self._submit(
-            "edit_ref", [{**data, "href": href, "body": body, "label": label, "relation": ""}], data, ref,
+            "edit_ref", [{**data, "href": href, "body": body, "format": fmt, "label": label, "relation": ""}],
+            data, ref,
             events=[self._event(row["task_id"], "ref_edited", label, row["ref_id"], kind=row["kind"])],
         )
 

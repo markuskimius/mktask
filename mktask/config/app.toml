@@ -33,11 +33,13 @@ heading = "mktask${IF(state.mkio.server.version, CONCAT(' ', state.mkio.server.v
 # ─── state ─────────────────────────────────────────────────────────────
 
 # Declared so the panes that publish a selection have somewhere to put it.
-# "" is nothing selected.
+# "" is nothing selected. `detail_ref` is the reference under the Detail
+# pane's cursor, published by refs.js for the Reader.
 [state]
 status = { message = "Connecting...", background = "#858585", color = "#000" }
 selected_task = ""
 selected_ref = ""
+detail_ref = ""
 
 # ─── menubar ───────────────────────────────────────────────────────────
 
@@ -46,6 +48,7 @@ label = "Tasks"
 items = [
   { label = "Tasks", action = "pane.show", args = "tasks" },
   { label = "Detail", action = "pane.show", args = "task-detail" },
+  { label = "Reader", action = "pane.show", args = "reader" },
   { label = "References", action = "pane.show", args = "references" },
   { label = "Activity", action = "pane.show", args = "activity" },
 ]
@@ -163,7 +166,7 @@ service = "all_tasks"
 protocol = "query"
 columns = [
   "task_id", "parent_task_id", "title", "score", "importance", "urgency", "due", "assigned_to", "status",
-  "last_event", "notes", "created_at", "updated_at", "completed_at", "_mkio_version",
+  "last_event", "notes", "notes_format", "created_at", "updated_at", "completed_at", "_mkio_version",
 ]
 visible = [
   "task_id", "title", "score", "importance", "urgency", "due", "assigned_to", "status",
@@ -194,6 +197,7 @@ completed_at = "Completed"
 last_event = "Last Event"
 assigned_to = "Assigned To"
 notes = "Notes"
+notes_format = "Notes Format"
 
 [panes.tasks.styles]
 score = [
@@ -287,7 +291,22 @@ compute = "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
 name = "notes"
 label = "Notes"
 type = "textarea"
+rows = 6
 value = ""
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "notes_format"
+label = "Format"
+type = "select"
+required = true
+value = "markdown"
+options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
+
+[[panes.tasks.buttons.action.dialog.fields]]
+label = "Syntax"
+type = "readonly"
+value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
+showWhen = "notes_format == 'markdown'"
 
 [[panes.tasks.buttons]]
 label = "Edit"
@@ -385,7 +404,22 @@ compute = "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
 name = "notes"
 label = "Notes"
 type = "textarea"
+rows = 6
 value = "${row.notes}"
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "notes_format"
+label = "Format"
+type = "select"
+required = true
+value = "${row.notes_format}"
+options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
+
+[[panes.tasks.buttons.action.dialog.fields]]
+label = "Syntax"
+type = "readonly"
+value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
+showWhen = "notes_format == 'markdown'"
 
 # Wide because mkui clips a dialog's status line to one row, and the server's
 # refusals have to fit. The top level is the `__top__` option, not "": mkui
@@ -530,7 +564,22 @@ compute = "IF(_assignee == '__new__', TRIM(_new_assignee ?? ''), _assignee)"
 name = "notes"
 label = "Notes"
 type = "textarea"
+rows = 6
 value = ""
+
+[[panes.tasks.buttons.action.dialog.fields]]
+name = "notes_format"
+label = "Format"
+type = "select"
+required = true
+value = "markdown"
+options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
+
+[[panes.tasks.buttons.action.dialog.fields]]
+label = "Syntax"
+type = "readonly"
+value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
+showWhen = "notes_format == 'markdown'"
 
 [[panes.tasks.buttons]]
 label = "History"
@@ -600,7 +649,7 @@ key = ["task_id"]
 feed = "task_versions"
 versions = "task_version_chain"
 state = "task_version_state"
-columns = ["title", "notes", "status", "importance", "urgency", "due", "assigned_to", "parent_task_id", "last_event"]
+columns = ["title", "notes", "notes_format", "status", "importance", "urgency", "due", "assigned_to", "parent_task_id", "last_event"]
 undo = { service = "tasks", op = "undo_action" }
 redo = { service = "tasks", op = "redo_action" }
 confirm = true
@@ -626,6 +675,18 @@ editTask = { pane = "tasks", button = "Edit" }
 editRef = { pane = "references", button = "Edit" }
 deleteRef = { pane = "references", button = "Delete" }
 
+# ─── panes.reader ──────────────────────────────────────────────────────
+
+# One widget (static/reader.js): the last thing picked, full height — a
+# reference picked in the References or Detail pane, or the selected task's
+# notes when a task was picked last. Markdown is rendered. Read-only.
+[panes.reader]
+title = "Reader"
+
+[[panes.reader.widgets]]
+type = "ref-reader"
+class = "reader-body"
+
 # ─── panes.references ──────────────────────────────────────────────────
 
 # Follows the Tasks selection through table linking (`link.listen`).
@@ -636,7 +697,7 @@ type = "mkio-table"
 service = "task_refs"
 protocol = "query"
 columns = [
-  "task_id", "task_title", "kind", "relation", "label", "body", "href", "mime", "created_at", "updated_at",
+  "task_id", "task_title", "kind", "relation", "label", "body", "format", "href", "mime", "created_at", "updated_at",
   "ref_id", "_mkio_version",
 ]
 visible = ["task_id", "task_title", "kind", "relation", "label", "body", "created_at", "_mkio_version"]
@@ -652,6 +713,7 @@ kind = "Kind"
 relation = "Relation"
 label = "Reference"
 body = "Text"
+format = "Format"
 href = "Target"
 mime = "Type"
 created_at = "Added"
@@ -751,15 +813,36 @@ value = "text"
 name = "body"
 label = "Text"
 type = "textarea"
+rows = 8
 required = true
-placeholder = "Paste the email or conversation here"
+placeholder = "Write, or paste the email or conversation here"
 
+# Markdown is rendered in the Detail pane; plain text is shown as written,
+# which is what a pasted email wants. A snippet pasted or dropped in the
+# Detail pane is always plain.
+[[panes.references.buttons.action.dialog.fields]]
+name = "format"
+label = "Format"
+type = "select"
+required = true
+value = "markdown"
+options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
+
+[[panes.references.buttons.action.dialog.fields]]
+label = "Syntax"
+type = "readonly"
+value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
+showWhen = "format == 'markdown'"
+
+# A Markdown first line would carry its markers, and the expression language
+# has no regex replace, so a Markdown label is left blank for the server to
+# fill: default_label takes the first line without them.
 [[panes.references.buttons.action.dialog.fields]]
 name = "label"
 label = "Label"
 type = "text"
-compute = "FIRST(FILTER(SPLIT(body ?? '', '\\n'), l -> TRIM(l) != '')) ?? ''"
-placeholder = "What to show for it"
+compute = "IF(format == 'markdown', '', FIRST(FILTER(SPLIT(body ?? '', '\\n'), l -> TRIM(l) != '')) ?? '')"
+placeholder = "Blank: the first line of the text"
 
 [panes.references.buttons.action.dialog.submit]
 label = "Add"
@@ -884,9 +967,25 @@ showWhen = "row.kind == 'url'"
 name = "body"
 label = "Text"
 type = "textarea"
+rows = 8
 required = true
 value = "${row.body}"
 showWhen = "row.kind == 'text'"
+
+[[panes.references.buttons.action.dialog.fields]]
+name = "format"
+label = "Format"
+type = "select"
+required = true
+value = "${row.format}"
+showWhen = "row.kind == 'text'"
+options = [{ value = "markdown", label = "Markdown" }, { value = "plain", label = "Plain text" }]
+
+[[panes.references.buttons.action.dialog.fields]]
+label = "Syntax"
+type = "readonly"
+value = "**bold**  _italic_  `code`  # heading  - list  1. list  > quote  [text](url)"
+showWhen = "row.kind == 'text' && format == 'markdown'"
 
 [[panes.references.buttons]]
 label = "History"
@@ -928,7 +1027,7 @@ key = ["ref_id"]
 feed = "ref_versions"
 versions = "ref_version_chain"
 state = "ref_version_state"
-columns = ["kind", "relation", "label", "href", "body", "mime", "task_id"]
+columns = ["kind", "relation", "label", "href", "body", "format", "mime", "task_id"]
 undo = { service = "tasks", op = "undo_action" }
 redo = { service = "tasks", op = "redo_action" }
 confirm = true
@@ -1130,7 +1229,8 @@ submit = { label = "Delete", service = "tasks", op = "delete_assignee" }
 
 # ─── frames ────────────────────────────────────────────────────────────
 
-# Default layout: Tasks over References on the left, Detail on the right.
+# Default layout: Tasks over References on the left, Detail over Reader on
+# the right.
 [[frames]]
 id = "main"
 x = 0.02
@@ -1153,7 +1253,15 @@ x = 0.68
 y = 0.03
 w = 0.3
 h = 0.94
-layout = { type = "tabs", active = 0, children = ["task-detail"] }
+
+[frames.layout]
+type = "split"
+dir = "v"
+ratios = [0.55, 0.45]
+children = [
+  { type = "tabs", active = 0, children = ["task-detail"] },
+  { type = "tabs", active = 0, children = ["reader"] },
+]
 
 # ─── mkio ──────────────────────────────────────────────────────────────
 
