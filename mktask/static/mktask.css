@@ -380,8 +380,10 @@
 }
 
 /* The Text pane: the text-pane widget (static/textpane.js) is the whole
-   body and fills it — the text scrolls inside it, so the editing bar
-   under the text takes a row of its own and never covers a word. The view
+   body and fills it — the text scrolls inside it, so the editing rows (the
+   tools over the text, as in a dialog's box; Cancel and Save under it, as
+   in a dialog's footer) each take a row of their own and never cover a
+   word. The view
    and the editor lay the text out alike (padding, size, line height), so
    a click lands on the character it was on. */
 .textpane-body {
@@ -446,30 +448,29 @@ pre.textpane-text {
 
 .textpane-editor .richtext-bar {
   flex: none;
-  border-bottom: none;
-  border-top: 1px solid var(--mkui-border);
   padding: 3px 4px;
   background: var(--mkui-bg-alt);
 }
 
-.textpane-editor .richtext-link {
+.textpane-editor .richtext-link { flex: none; }
+
+.textpane-foot {
   flex: none;
-  border-bottom: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 3px 4px;
   border-top: 1px solid var(--mkui-border);
+  background: var(--mkui-bg-alt);
 }
 
 .textpane-editor .richtext-link-input { flex: 1; padding: 3px 6px; }
 
-.richtext-end {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  margin-left: auto;
-}
 
 .textpane-status {
-  margin: 0 6px;
+  flex: 1;
+  margin: 0 6px 0 2px;
   font-size: 0.85em;
   color: var(--mkui-fg-mute, #858585);
   white-space: nowrap;

@@ -101,8 +101,9 @@ one, and the browser remembers which you prefer.
 **The Text pane** (under Detail; *Tasks › Text* reopens it) shows the text
 of the last thing you picked, full height, and nothing else: a task's notes,
 or a snippet picked in the References or Detail pane (an image shows as
-itself). **Click the text to edit it right there**: the formatting tools,
-*Cancel* and *Save* appear in a bar under the text, never over it. The edit
+itself). **Click the text to edit it right there**: as in an Edit dialog, the
+formatting tools appear above the text and *Cancel* and *Save* below it,
+each in a row of its own, never over the text. The edit
 stays open until you press *Save* (⌘/Ctrl+Enter) or *Cancel* (Esc), even if
 you pick something else meanwhile. A plain note is saved formatted, and one
 save is one step for *Undo*.

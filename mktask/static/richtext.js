@@ -91,12 +91,11 @@ function literalDoc(text) {
 
 /** The editor and its toolbar, mounted in a new element (`.el`).
  *
- *  `literal` reads a set value as plain text; `barAt: "bottom"` puts the
- *  toolbar under the text instead of over it; `extra` is appended to the
- *  toolbar's end (a Save button). `onChange(markdown)` runs on every edit.
+ *  `literal` reads a set value as plain text. `onChange(markdown)` runs on
+ *  every edit.
  *  `set` keeps the value as given until an edit, so `get` answers exactly
  *  what was set while nothing has been typed. */
-export function mountRichText({ literal = false, placeholder = "", rows = 0, barAt = "top", extra = [], onChange } = {}) {
+export function mountRichText({ literal = false, placeholder = "", rows = 0, onChange } = {}) {
   const root = el("div", "richtext");
   const bar = el("div", "richtext-bar");
   bar.setAttribute("role", "toolbar");
@@ -112,8 +111,7 @@ export function mountRichText({ literal = false, placeholder = "", rows = 0, bar
   linkRow.append(linkInput, linkApply, linkRemove);
   const body = el("div", "richtext-body");
   if (rows) body.style.setProperty("--richtext-rows", String(rows));
-  if (barAt === "bottom") root.append(body, linkRow, bar);
-  else root.append(bar, linkRow, body);
+  root.append(bar, linkRow, body);
 
   let value = "";            // what get() answers: as set, until an edit
   let given = "";            // what was last set, until an edit (null after)
@@ -151,15 +149,8 @@ export function mountRichText({ literal = false, placeholder = "", rows = 0, bar
     bar.appendChild(b);
     if (active) buttons.push([b, active]);
   }
-  // `extra` is one group at the bar's right end, so a bar that wraps keeps
-  // it in the corner rather than wherever the tools ran out.
-  if (extra.length) {
-    const end = el("span", "richtext-end");
-    end.append(...extra);
-    bar.appendChild(end);
-  }
 
-  // The link box: beside the toolbar rather than a prompt, which would block
+  // The link box: under the toolbar rather than a prompt, which would block
   // the page. Enter applies, Escape goes back to the text without closing
   // the dialog.
   function openLink() {
