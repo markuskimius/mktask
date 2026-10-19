@@ -377,7 +377,10 @@ fake Windows, what only breaks on Windows (every text read names its
 encoding, LF pinned),
 the editor's Markdown under node, when it is installed (typed text comes back
 as typed, what the editor writes reads back as itself, and nothing typed
-renders as markup), the Text pane's two saves, and the static integrity of
+renders as markup), the Text pane's two saves, the browser side in headless
+Chrome when it is installed (`MKTASK_CHROME` names one; typing in the
+editor, editing in the Text pane, pasting, rendering, a clean console), and
+the static integrity of
 `app.toml` against `mktask.toml` and `refs.js` (every column, dialog field,
 service, and state path a pane names, the Detail pane's task block and the
 dialogs its toolbar borrows, and the reference sections against the kinds

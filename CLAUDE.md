@@ -54,6 +54,8 @@ tests/
                     class per subject; TestUpgrade boots a pre-0.8.0 database. **Refs are labels,
                     not identities**: _txn makes each unique, or undo_action would group two
                     tests' rows as one action
+  test_browser.py   headless Chrome over CDP, skipped without it (MKTASK_CHROME): the dialog editor,
+                    the Text pane, paste, render; a clean console on every page
   test_richtext.py  the bundle under node: typed text, round trip, line starts, safe render
   test_platform.py  encoding on every text read/write (AST walk), UTF-8 config, ASCII seed, LF pinned
   test_ui_config.py static integrity of app.toml against mktask.toml, index.html, and refs.js (the last
