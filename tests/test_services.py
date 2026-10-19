@@ -65,6 +65,21 @@ def test_default_label(kind, href, body, expected):
     ("snake_case_name and 2 * 3 * 4", "snake_case_name and 2 * 3 * 4"),   # not emphasis
     (r"\*literal\* stars", "*literal* stars"),
     ("Plain words", "Plain words"),
+    # What the editor writes: entities, every escaped punctuation, a break
+    ("Q&amp;A &lt;tag&gt; &amp; more", "Q&A <tag> & more"),
+    ("## Agenda &amp; notes", "Agenda & notes"),
+    ("&#32;   indented", "indented"),                 # a leading space, kept from Markdown
+    ("&#9;Tabbed", "Tabbed"),
+    ("&nbsp;", ""),                                   # a blank line the editor kept
+    ("&#169; 2026 &#x2014; ok", "\u00a9 2026 \u2014 ok"),
+    ("&#42;not&#42; emphasis", "*not* emphasis"),       # decoded last: a character, not a marker
+    (r"\<b\> and \| pipe \{x\}", "<b> and | pipe {x}"),
+    (r"1\. not a list", "1. not a list"),
+    (r"\# not a heading", "# not a heading"),
+    (r"\* not a list", "* not a list"),
+    (r"\-- sig", "-- sig"),
+    ("line\\", "line"),                              # a backslash break ends the line
+    (r"C:\\path\\", "C:\\path\\"),                   # an escaped backslash is a character
 ])
 def test_plain_text(line, words):
     assert plain_text(line) == words
@@ -75,6 +90,11 @@ def test_plain_text(line, words):
     ("**Call Bob** re: budget", "plain", "**Call Bob** re: budget"),   # plain text is as typed
     ("```\ncode\n```\n# Heading", "markdown", "code"),                # a fence line is not a label
     ("#\n\n- one", "markdown", "one"),                                 # a bare marker says nothing
+    ("&nbsp;\n\nreal first", "markdown", "real first"),                # a kept blank line is blank
+    ("\n\nafter a blank line", "markdown", "after a blank line"),
+    ("  \nafter a break", "markdown", "after a break"),
+    ("\\--   \nSig", "markdown", "--"),                               # a signature's dashes
+    ("Q&amp;A", "plain", "Q&amp;A"),                                   # plain text is never decoded
 ])
 def test_default_label_of_markdown(body, fmt, expected):
     assert default_label("text", "", body, fmt) == expected

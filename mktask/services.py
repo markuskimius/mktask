@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import html
 import os
 import re
 from pathlib import Path
@@ -161,17 +162,25 @@ _MD_INLINE = (
     (re.compile(r"(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)"), r"\1"),
     (re.compile(r"`([^`]*)`"), r"\1"),
 )
-_MD_ESCAPE = re.compile(r"\\([\\`*_~\[\]()#>+\-.!])")
+_MD_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")   # CommonMark: any ASCII punctuation
 _MD_HELD = 0xE000   # escaped characters wait in the private use area while markers go
 
 
 def plain_text(line: str) -> str:
-    """One line of Markdown as the words it shows: markers and link targets gone."""
+    """One line of Markdown as the words it shows: markers and link targets gone.
+
+    Entities go last (`&amp;`, `&lt;`, the `&#32;` and `&nbsp;` the editor
+    writes for a leading space and a blank line), so a decoded `<` or `*`
+    is a character and never a marker; a line that was only `&nbsp;` is then
+    blank. A backslash ending the line is a line break, not a character.
+    """
     line = _MD_ESCAPE.sub(lambda m: chr(_MD_HELD + ord(m[1])), line.strip())
+    line = re.sub(r"\\$", "", line)
     line = _MD_BLOCK.sub("", line)
     for pattern, repl in _MD_INLINE:
         line = pattern.sub(repl, line)
-    return re.sub("[\ue000-\ue07f]", lambda m: chr(ord(m[0]) - _MD_HELD), line).strip()
+    line = re.sub("[\ue000-\ue07f]", lambda m: chr(ord(m[0]) - _MD_HELD), line)
+    return html.unescape(line).strip()
 
 
 def default_label(kind: str, href: str, body: str, fmt: str = "plain") -> str:

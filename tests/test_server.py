@@ -886,6 +886,20 @@ class TestFormat:
         assert md["label"] == "Call Bob re: budget", "a Markdown label is the words, not the markers"
         assert rows["url"]["format"] == rows["file"]["format"] == "plain", "only a snippet is formatted"
 
+    async def test_a_label_reads_as_the_editor_shows_the_text(self, server):
+        """The editor writes entities and escapes; a label made from its
+        Markdown is the words on screen, a kept blank line skipped."""
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(server + "/ws") as ws:
+                task = await _add(ws, "Editor labels", "fl1")
+                await _add_ref(ws, task, "fl2", kind="text", format="markdown",
+                               body="&nbsp;\n\nQ&amp;A **notes** &lt;draft&gt; \\#2\\\nmore")
+                await _add_ref(ws, task, "fl3", kind="text", body="&nbsp; as typed")
+                await asyncio.sleep(0.2)
+                labels = {r["format"]: r["label"] for r in await _refs(ws, task)}
+        assert labels["markdown"] == "Q&A notes <draft> #2"
+        assert labels["plain"] == "&nbsp; as typed", "plain text is never decoded"
+
     async def test_edit_switches_the_format_and_undo_steps_it_back(self, server):
         async with aiohttp.ClientSession() as s:
             async with s.ws_connect(server + "/ws") as ws:
