@@ -380,11 +380,10 @@
 }
 
 /* The Text pane: the text-pane widget (static/textpane.js) is the whole
-   body and fills it — the text scrolls inside it, so the editing rows (the
-   tools over the text, as in a dialog's box; Cancel and Save under it, as
-   in a dialog's footer) each take a row of their own and never cover a
-   word. The view
-   and the editor lay the text out alike (padding, size, line height), so
+   body and fills it — the text scrolls inside it, so the editing rows under
+   it (the tools, as in a dialog's box; Cancel and Save, as in a dialog's
+   footer) each take a row of their own and never cover or move a word.
+   The view and the editor lay the text out alike (padding, size, line height), so
    a click lands on the character it was on. */
 .textpane-body {
   height: 100%;
@@ -481,7 +480,7 @@ pre.textpane-text {
 
 .textpane-status.textpane-warn { color: #e0a030; }
 
-/* The `richtext` dialog field (richtext.js): a toolbar over the editor,
+/* The `richtext` dialog field (richtext.js): a toolbar under the editor,
    boxed like mkui's own inputs. The text inside is styled as a rendered
    Markdown snippet is, so a note looks the same written and read. */
 .richtext {
@@ -501,7 +500,7 @@ pre.textpane-text {
   align-items: center;
   gap: 1px;
   padding: 2px;
-  border-bottom: 1px solid var(--mkui-border);
+  border-top: 1px solid var(--mkui-border);
 }
 
 .richtext-tool {
@@ -538,7 +537,7 @@ pre.textpane-text {
   display: flex;
   gap: 4px;
   padding: 4px;
-  border-bottom: 1px solid var(--mkui-border);
+  border-top: 1px solid var(--mkui-border);
 }
 
 .richtext-link[hidden] { display: none; }

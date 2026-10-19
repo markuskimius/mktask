@@ -111,7 +111,8 @@ export function mountRichText({ literal = false, placeholder = "", rows = 0, onC
   linkRow.append(linkInput, linkApply, linkRemove);
   const body = el("div", "richtext-body");
   if (rows) body.style.setProperty("--richtext-rows", String(rows));
-  root.append(bar, linkRow, body);
+  // The tools under the text, so opening an editor never moves a word.
+  root.append(body, linkRow, bar);
 
   let value = "";            // what get() answers: as set, until an edit
   let given = "";            // what was last set, until an edit (null after)
@@ -150,7 +151,7 @@ export function mountRichText({ literal = false, placeholder = "", rows = 0, onC
     if (active) buttons.push([b, active]);
   }
 
-  // The link box: under the toolbar rather than a prompt, which would block
+  // The link box: over the toolbar rather than a prompt, which would block
   // the page. Enter applies, Escape goes back to the text without closing
   // the dialog.
   function openLink() {

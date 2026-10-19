@@ -18,9 +18,9 @@
 //
 // A click in the text edits it there: the same editor the dialogs use
 // (richtext.js) takes the text's place, the cursor where the click landed.
-// It is laid out as a dialog is: the formatting tools over the text (which
-// moves down a row to make room), Cancel and Save in a row of their own
-// under it, so neither ever covers a word. The edit stays open until Save
+// It is laid out as a dialog is: under the text, the formatting tools, then
+// Cancel and Save in a row of their own; the text itself does not move,
+// and nothing ever covers a word. The edit stays open until Save
 // (or Cmd/Ctrl+Enter) or Cancel (or Escape): clicking elsewhere, or
 // picking another task, leaves it as it is, and the pane follows the new
 // pick only once the edit is closed. A save writes the text alone
@@ -139,7 +139,6 @@ registerWidget("text-pane", (spec, app, host) => {
 
   function start(item, x, y) {
     const scroll = view.scrollTop;
-    const top = view.getBoundingClientRect().top;
     const rt = mountRichText({
       literal: item.format !== "markdown",
       onChange: () => { editing.touched = true; editing.error = ""; paintBar(); },
@@ -150,11 +149,9 @@ registerWidget("text-pane", (spec, app, host) => {
     root.replaceChildren(rt.el, foot);
     const body = rt.el.querySelector(".richtext-body");
     body.scrollTop = scroll;
-    // The editor lays the text out as the view did, only lower by the
-    // toolbar over it, so the point clicked, moved down with the text, is
-    // the same character; past the end of the text is the end.
-    const shift = body.getBoundingClientRect().top - top;
-    const at = x == null ? null : rt.editor.view.posAtCoords({ left: x, top: y + shift });
+    // The editor lays the text out where the view did, so the point
+    // clicked is the same character; past the end of the text is the end.
+    const at = x == null ? null : rt.editor.view.posAtCoords({ left: x, top: y });
     rt.focus(at?.pos);
     body.scrollTop = scroll;
     paintBar();
