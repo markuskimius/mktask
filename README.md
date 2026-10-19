@@ -346,6 +346,10 @@ without it: *Tasks › Text* adds it.
 0.22.0 changes no schema: a snippet pasted or dropped in the Detail pane
 keeps the formatting of what was copied (bold, lists, links), and stays
 plain when what was copied had none.
+0.22.1 changes no schema: a formatted snippet's automatic label reads as
+the text shows (`Q&A`, not `Q&amp;A`; a blank first line skipped). Labels
+made before keep what they were given: clear one in the Edit dialog to have
+it made again.
 
 ## Development
 
