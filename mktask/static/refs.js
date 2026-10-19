@@ -61,7 +61,7 @@
 
 import { registerWidget, ensureMkio } from "/mkui/src/index.js";
 import { icon } from "/mkui/src/lib/icons.js";
-import { renderMarkdown } from "/static/richtext.js";
+import { renderMarkdown, htmlToMarkdown, isFormatted } from "/static/richtext.js";
 
 const UPLOAD_URL = "/files";
 const REFS_SERVICE = "task_refs";
@@ -397,11 +397,17 @@ registerWidget("task-refs", (spec, app, host) => {
     await addRef({ kind: "file", href: up.href, mime: up.mime, label });
   };
 
-  const addText = async (text) => {
+  /** Pasted or dropped text: a URL is a link; HTML with formatting in it
+   *  (bold, a list, a link — a web page, a document, an email) is a
+   *  formatted snippet, through the editor's schema; anything else, plain
+   *  as copied. Many apps put HTML on the clipboard for plain text (an
+   *  editor's coloured code), and that keeps its every space. */
+  const addText = async (text, html = "") => {
     const t = text.trim();
-    if (!t) return;
-    if (isUrl(t)) await addRef({ kind: "url", href: t });
-    else await addRef({ kind: "text", body: text });
+    if (t && isUrl(t)) return addRef({ kind: "url", href: t });
+    const md = html ? htmlToMarkdown(html) : "";
+    if (md && isFormatted(md)) await addRef({ kind: "text", body: md, format: "markdown" });
+    else if (t) await addRef({ kind: "text", body: text });
   };
 
   const guarded = (fn) => async (...args) => {
@@ -550,12 +556,15 @@ registerWidget("task-refs", (spec, app, host) => {
     if (!task) return;
     const files = [...(ev.dataTransfer?.files ?? [])];
     if (files.length) return acceptFiles(files);
-    const text = ev.dataTransfer?.getData("text/uri-list") || ev.dataTransfer?.getData("text/plain");
-    if (text) guarded(addText)(text);
+    const dt = ev.dataTransfer;
+    const text = dt?.getData("text/uri-list") || dt?.getData("text/plain") || "";
+    const html = dt?.getData("text/html") || "";
+    if (text || html) guarded(addText)(text, html);
   });
 
   // Paste anywhere while a task is selected and no text field has focus:
-  // an image or file uploads, a URL becomes a url reference, text a snippet.
+  // an image or file uploads, a URL becomes a url reference, text a snippet
+  // (formatted when what was copied was).
   window.addEventListener("paste", (ev) => {
     if (!task || inTextField() || !root.isConnected) return;
     const dt = ev.clipboardData;
@@ -563,7 +572,8 @@ registerWidget("task-refs", (spec, app, host) => {
     const files = [...(dt.files ?? [])];
     if (files.length) { ev.preventDefault(); return acceptFiles(files); }
     const text = dt.getData("text/plain");
-    if (text && text.trim()) { ev.preventDefault(); guarded(addText)(text); }
+    const html = dt.getData("text/html");
+    if (text.trim() || html) { ev.preventDefault(); guarded(addText)(text, html); }
   });
 
   // ── The reference list ──────────────────────────────────────────────

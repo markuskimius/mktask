@@ -55,6 +55,7 @@ const run = {
   roundtrip: (md) => T.serializeMarkdown(T.parseMarkdown(md)),
   escape: (text) => T.escapeLineStarts(text),
   render: (md) => T.renderMarkdown(md, doc).html,
+  formatted: (md) => T.isFormatted(md),
   protocols: () => T.SAFE_PROTOCOLS,
 };
 const cases = JSON.parse(readFileSync(0, "utf8"));
@@ -105,6 +106,23 @@ ESCAPE = [
     ("x # y", "x # y"),
 ]
 
+# Whether a paste keeps its formatting: only Markdown that holds some does.
+FORMATTED = [
+    ("**bold** word", True),
+    ("a [link](https://a.example)", True),
+    ("- one\n- two", True),
+    ("# Head", True),
+    ("> quote", True),
+    ("`code`", True),
+    ("```\ncode\n```", True),
+    ("plain words", False),
+    ("two\n\nparagraphs", False),
+    ("a  \nbreak", False),
+    ("\\*not\\* bold", False),   # escaped: reads as Markdown, holds none
+    ("1\\. not a list", False),
+    ("", False),
+]
+
 RENDER = [
     ("**ok** _it_", "<p><strong>ok</strong> <em>it</em></p>"),
     ("a\nb", "<p>a\nb</p>"),   # one newline: pre-wrap shows it as a break
@@ -136,13 +154,15 @@ def bundle():
         return json.loads(out.stdout)
 
     cases = ([["typed", t] for t in TYPED] + [["roundtrip", m] for m in ROUNDTRIP]
-             + [["escape", e] for e, _ in ESCAPE] + [["render", r] for r, _ in RENDER] + [["protocols", None]])
+             + [["escape", e] for e, _ in ESCAPE] + [["render", r] for r, _ in RENDER]
+             + [["formatted", m] for m, _ in FORMATTED] + [["protocols", None]])
     results = iter(call(cases))
     return {
         "typed": dict(zip(TYPED, results)),
         "roundtrip": dict(zip(ROUNDTRIP, results)),
         "escape": dict(zip((e for e, _ in ESCAPE), results)),
         "render": dict(zip((r for r, _ in RENDER), results)),
+        "formatted": dict(zip((m for m, _ in FORMATTED), results)),
         "protocols": next(results),
     }
 
@@ -170,6 +190,14 @@ class TestLineStarts:
     @pytest.mark.parametrize("text, escaped", ESCAPE)
     def test_escape(self, bundle, text, escaped):
         assert bundle["escape"][text] == escaped
+
+
+class TestIsFormatted:
+    """A paste becomes a formatted snippet only when it holds formatting."""
+
+    @pytest.mark.parametrize("markdown, formatted", FORMATTED)
+    def test_is_formatted(self, bundle, markdown, formatted):
+        assert bundle["formatted"][markdown] is formatted
 
 
 class TestRender:

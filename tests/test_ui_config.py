@@ -378,14 +378,31 @@ def test_refs_js_renders_markdown_with_its_own_module():
     editor lives in, so it is shown through the schema it was written with;
     it must export what refs.js calls, from the bundle."""
     js = (STATIC / "refs.js").read_text(encoding="utf-8")
-    assert 'import { renderMarkdown } from "/static/richtext.js";' in js
+    assert 'import { renderMarkdown, htmlToMarkdown, isFormatted } from "/static/richtext.js";' in js
     md = (STATIC / "richtext.js").read_text(encoding="utf-8")
-    assert "export const { renderMarkdown, htmlToMarkdown } = T;" in md
-    assert "export function renderMarkdown(" in (PKG.parent / "editor" / "entry.js").read_text(encoding="utf-8")
+    assert "export const { renderMarkdown, htmlToMarkdown, isFormatted } = T;" in md
+    entry = (PKG.parent / "editor" / "entry.js").read_text(encoding="utf-8")
+    for name in ("renderMarkdown", "htmlToMarkdown", "isFormatted"):
+        assert f"export function {name}(" in entry, name
     assert not (STATIC / "markdown.js").exists(), "one renderer, not two"
     assert "innerHTML" not in md and "outerHTML" not in md and "insertAdjacentHTML" not in md, \
         "the renderer builds nodes; it never parses HTML"
 
+
+
+def test_a_paste_is_formatted_only_when_what_was_copied_was():
+    """Paste and drop read the HTML beside the text. A URL is still a link;
+    HTML holding formatting becomes a formatted snippet through the editor's
+    schema; anything else (an editor's coloured code) stays plain as copied."""
+    js = (STATIC / "refs.js").read_text(encoding="utf-8")
+    add = js.split("const addText = async (text, html = \"\") => {")[1].split("\n  };")[0]
+    assert add.index("isUrl(t)") < add.index("htmlToMarkdown(html)"), "a URL wins over its HTML"
+    assert 'if (md && isFormatted(md)) await addRef({ kind: "text", body: md, format: "markdown" });' in add
+    assert 'else if (t) await addRef({ kind: "text", body: text });' in add, "plain, as copied"
+    paste = js.split('window.addEventListener("paste"')[1].split("});")[0]
+    drop = js.split('box.addEventListener("drop"')[1].split("});")[0]
+    for handler in (paste, drop):
+        assert 'getData("text/html")' in handler and "guarded(addText)(text, html)" in handler
 
 def test_detail_toolbar_borrows_the_pane_dialogs(app_config):
     """The Detail pane's Edit / Delete open the dialogs the Tasks and

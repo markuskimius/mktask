@@ -29,7 +29,7 @@ import { registerFieldType } from "/mkui/src/index.js";
 import { icon } from "/mkui/src/lib/icons.js";
 import * as T from "/static/vendor/tiptap.js";
 
-export const { renderMarkdown, htmlToMarkdown } = T;
+export const { renderMarkdown, htmlToMarkdown, isFormatted } = T;
 
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform ?? "");
 const keys = (k) => (MAC ? k.replace(/Mod-/g, "⌘").replace(/Shift-/g, "⇧").replace(/Alt-/g, "⌥")

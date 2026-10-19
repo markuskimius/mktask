@@ -117,6 +117,15 @@ export function renderMarkdown(markdown, doc = globalThis.document) {
   return DOMSerializer.fromSchema(schema).serializeFragment(node.content, { document: doc });
 }
 
+/** Whether Markdown holds any formatting: a mark (bold, a link…) or a block
+ *  other than a paragraph (a list, a heading…). Text that merely reads as
+ *  Markdown once escaped holds none. */
+export function isFormatted(markdown) {
+  const plain = new Set(["doc", "paragraph", "text", "hardBreak"]);
+  const walk = (node) => !!node.marks?.length || !plain.has(node.type) || (node.content ?? []).some(walk);
+  return walk(parseMarkdown(markdown));
+}
+
 /** Pasted HTML → Markdown, through the schema: what the editor would keep
  *  of it, and nothing else. `""` for nothing worth keeping. */
 export function htmlToMarkdown(html) {

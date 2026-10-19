@@ -91,8 +91,10 @@ tool. A snippet's label, left blank, is its first line without the
 formatting. A snippet or note written as plain text before 0.21.0 opens in
 Edit exactly as written, with a **Format** picker: *Formatted* moves it into
 the editor character for character, and from then on it stays formatted.
-A snippet pasted or dropped in the Detail pane is plain, as a pasted email
-wants. Anything that looks like HTML is shown as the characters typed, never
+A snippet pasted or dropped in the Detail pane keeps the formatting of what
+was copied — bold, lists and links from a web page, a document or an email —
+and is plain text when what was copied had none, so code copied from an
+editor keeps every space. Anything that looks like HTML is shown as the characters typed, never
 as markup, and a link only opens a web or mail address.
 
 **Snippets are open from the start** in the Detail pane, so selecting a task
