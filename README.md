@@ -343,6 +343,9 @@ application registers — the editor. Snippets and notes are written
 formatted, and the new **Text** pane (under Detail) shows the picked task's
 notes or snippet, editable in place. A layout saved before 0.21.0 opens
 without it: *Tasks › Text* adds it.
+0.22.0 changes no schema: a snippet pasted or dropped in the Detail pane
+keeps the formatting of what was copied (bold, lists, links), and stays
+plain when what was copied had none.
 
 ## Development
 
