@@ -25,7 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "mkio>=1.6.0,<2",  # 1.5.0: expression language 2, which app.toml's mkio.expect.expr pins exactly; 1.6.0: Cache-Control: no-cache on served files, so a browser does not keep an old mkui module
-    "mkui>=1.13.0,<2",  # 1.9.0: dialog.about takes a `builtins` list; 1.13.0: a second shift-click on the header caret folds every level, which the Keyboard Shortcuts box promises; mkui 1.x is built against mkio 1.x and refuses any other major
+    "mkui>=1.35.0,<2",  # 1.9.0: dialog.about takes a `builtins` list; 1.13.0: a second shift-click on the header caret folds every level, which the Keyboard Shortcuts box promises; 1.35.0: registerFieldType, which the richtext editor field is; mkui 1.x is built against mkio 1.x and refuses any other major
 ]
 
 [project.optional-dependencies]
@@ -45,6 +45,10 @@ mktask = "mktask.__main__:main"
 
 [tool.hatch.version]
 path = "mktask/__init__.py"
+
+# Notes for working on the code, not a file to serve under /static.
+[tool.hatch.build]
+exclude = ["mktask/static/CLAUDE.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

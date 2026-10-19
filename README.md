@@ -80,18 +80,20 @@ clicking a snippet or a link opens it where it stands. The subtree comes from
 the tasks themselves, not from what the blotter is showing, so a completed
 child's references stay with its ancestor.
 
-**A snippet can be formatted.** The Add Text and Edit dialogs ask for a
-**Format**: *Markdown* (what Add Text opens on) or *Plain text*. A Markdown
-snippet is rendered in the Detail pane — `**bold**`, `_italic_`,
-`~~strike~~`, `` `code` ``, `#` headings, `-` and `1.` lists (indent to
-nest), `>` quotes, fenced code blocks, `---` rules, `[text](url)` and bare
-URLs; a single line break is kept, as you typed it. Its label, left blank,
-is the first line without the markers. A plain snippet is shown exactly as
-written, which is what a pasted email wants, and a snippet pasted or dropped
-in the Detail pane is always plain. Anything that looks like HTML is shown
-as the characters typed, never as markup. **A task's notes** take the same
-Format in New, Edit and Split, and Markdown notes are rendered in the
-Detail pane's task block.
+**Snippets and notes are written formatted.** Add Text, New, Split and the
+Edit dialogs write in an editor that shows the formatting as you type: select
+a few letters (even in the middle of a word) and press ⌘/Ctrl+B or I; start
+a line with `1. ` or `- ` for a list, `# ` for a heading, `> ` for a quote.
+The toolbar under the text does the same and shows what the cursor is in;
+⌘/Ctrl+K adds a link. Enter is a new line and ⌘/Ctrl+Enter saves. What is
+stored is still plain text (Markdown), so a database stays readable by any
+tool. A snippet's label, left blank, is its first line without the
+formatting. A snippet or note written as plain text before 0.21.0 opens in
+Edit exactly as written, with a **Format** picker: *Formatted* moves it into
+the editor character for character, and from then on it stays formatted.
+A snippet pasted or dropped in the Detail pane is plain, as a pasted email
+wants. Anything that looks like HTML is shown as the characters typed, never
+as markup, and a link only opens a web or mail address.
 
 **Snippets are open from the start** in the Detail pane, so selecting a task
 shows its notes and every snippet, formatted, with nothing more to click.
@@ -332,6 +334,13 @@ unchanged when no `app.toml` sits next to it.
 its table has (Parent, Updated, Completed, a reference's Target and Type, the
 internal ids), each off until you tick it, and a task's History diffs its
 Assigned To. A saved layout keeps the columns it saved.
+0.21.0 adds two columns, `tasks.notes_format` and `task_refs.format`, which
+an existing database gains on first start (everything already there is
+plain text), and requires mkui 1.35.0, whose dialogs take a field type an
+application registers — the editor. Snippets and notes are written
+formatted, and the new **Text** pane (under Detail) shows the picked task's
+notes or snippet, editable in place. A layout saved before 0.21.0 opens
+without it: *Tasks › Text* adds it.
 
 ## Development
 
@@ -339,6 +348,15 @@ Assigned To. A saved layout keeps the columns it saved.
 pip install -e '.[test]'
 mktask -d :memory:
 python -m pytest
+```
+
+The formatted-text editor is [TipTap](https://tiptap.dev) 3 (MIT), bundled
+into one file, `mktask/static/vendor/tiptap.js`, with every bundled
+package's license beside it. The bundle is committed, so running or
+installing mktask needs no node or npm; only rebuilding it does:
+
+```bash
+cd editor && npm install && npm run build
 ```
 
 The tests cover the CLI and config loading, Task ID formatting, a real
@@ -351,7 +369,10 @@ directions, a swap flipping them, delete refused in use), file upload,
 dedupe, and cleanup, live delete announcements, the query filter, saved
 layouts, the port, host, user, and files flags), the port probe on a
 fake Windows, what only breaks on Windows (every text read names its
-encoding, LF pinned), and the static integrity of
+encoding, LF pinned),
+the editor's Markdown under node, when it is installed (typed text comes back
+as typed, what the editor writes reads back as itself, and nothing typed
+renders as markup), the Text pane's two saves, and the static integrity of
 `app.toml` against `mktask.toml` and `refs.js` (every column, dialog field,
 service, and state path a pane names, the Detail pane's task block and the
 dialogs its toolbar borrows, and the reference sections against the kinds

@@ -1066,6 +1066,10 @@ def test_field_types_are_built_in_or_registered(app_config):
     builtin = (Path(mkui.static_dir) / "src" / "lib" / "dialogs.js").read_text(encoding="utf-8")
     m = re.search(r"FIELD_TYPES = Object\.freeze\(\[(.*?)\]\)", builtin, re.S)
     assert m, "mkui has no FIELD_TYPES: the registry needs mkui 1.35.0"
+    project = tomllib.loads((PKG.parent / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    pin = next(d for d in project["dependencies"] if d.startswith("mkui"))
+    floor = tuple(int(n) for n in re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", pin).groups())
+    assert floor >= (1, 35, 0), f"a registered dialog field type needs mkui 1.35.0: {pin}"
     known = set(re.findall(r'"([a-z]+)"', m.group(1)))
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     for path in re.findall(r'import\s*"/static/([^"]+)"', html):
