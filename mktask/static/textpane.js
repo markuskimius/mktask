@@ -18,9 +18,9 @@
 //
 // A click in the text edits it there: the same editor the dialogs use
 // (richtext.js) takes the text's place, the cursor where the click landed.
-// It is laid out as a dialog is: under the text, the formatting tools, then
-// Cancel and Save in a row of their own; the text itself does not move,
-// and nothing ever covers a word. The edit stays open until Save
+// One row under the text holds the formatting tools and, at its right end,
+// Cancel and Save; the text itself does not move, and nothing ever covers
+// a word. The edit stays open until Save
 // (or Cmd/Ctrl+Enter) or Cancel (or Escape): clicking elsewhere, or
 // picking another task, leaves it as it is, and the pane follows the new
 // pick only once the edit is closed. A save writes the text alone
@@ -102,7 +102,7 @@ registerWidget("text-pane", (spec, app, host) => {
 
   // ── Editing in place ─────────────────────────────────────────────────
 
-  const foot = el("div", "textpane-foot");
+  const actions = el("span", "textpane-actions");
   const status = el("span", "textpane-status");
   const cancelBtn = el("button", "mkui-btn", "Cancel");
   const saveBtn = el("button", "mkui-btn mkui-btn-primary", "Save");
@@ -111,7 +111,7 @@ registerWidget("text-pane", (spec, app, host) => {
   saveBtn.title = `Save (${MAC ? "⌘" : "Ctrl+"}Enter)`;
   cancelBtn.addEventListener("click", () => stop());
   saveBtn.addEventListener("click", () => save());
-  foot.append(status, cancelBtn, saveBtn);
+  actions.append(status, cancelBtn, saveBtn);
 
   /** The record being edited as the sources now have it (a live update), or
    *  null when none of them still carries it. */
@@ -146,7 +146,10 @@ registerWidget("text-pane", (spec, app, host) => {
     rt.set(item.text);
     rt.el.classList.add("textpane-editor");
     editing = { item, rt, touched: false, saving: false, stale: false, error: "" };
-    root.replaceChildren(rt.el, foot);
+    // One group at the toolbar's right end, so a toolbar that wraps keeps
+    // Save in the corner rather than wherever the tools ran out.
+    rt.el.querySelector(".richtext-bar").appendChild(actions);
+    root.replaceChildren(rt.el);
     const body = rt.el.querySelector(".richtext-body");
     body.scrollTop = scroll;
     // The editor lays the text out where the view did, so the point
